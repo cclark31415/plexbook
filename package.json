@@ -16,7 +16,6 @@
     "@capacitor/android": "^8.0.0",
     "@capacitor/core": "^8.0.0",
     "@capacitor/haptics": "^8.0.0",
-    "@capacitor/preferences": "^8.0.0",
-    "@nicepkg/capacitor-file-opener": "^1.0.0"
+    "@capacitor/preferences": "^8.0.0"
   }
 }

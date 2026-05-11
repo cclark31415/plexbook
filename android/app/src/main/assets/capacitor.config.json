@@ -1,0 +1,8 @@
+{
+	"appId": "com.chrisclark.plexbook",
+	"appName": "PlexBook",
+	"webDir": "www",
+	"plugins": {
+		"Preferences": {}
+	}
+}

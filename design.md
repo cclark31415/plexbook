@@ -1,4 +1,4 @@
-1.  This will primarily be an non-drm audiobook player that streams from a Plex server
+1.  This will primarily be a non-drm audiobook player that streams from a Plex server
 2.  Local playback is also supported.
 3.  Plex authentication with JWT will be implemented as it is the newest authentication type
 4.  For local playback, either individual files or a folder can be selected to add to a library.
