@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#f4f0eb" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#1a1410" media="(prefers-color-scheme: dark)" />
+
+  <title>PlexBook — Audiobook Player for Plex &amp; Local Files</title>
+  <meta name="description" content="Stream audiobooks from your Plex server or play local files. Chapter navigation, speed control, position sync, and beautiful playback UI." />
+  <meta name="author" content="Chris Clark" />
+  <link rel="canonical" href="https://plexbook.chrisclark.net/" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="PlexBook" />
+  <meta property="og:title" content="PlexBook — Audiobook Player for Plex &amp; Local Files" />
+  <meta property="og:description" content="Stream audiobooks from your Plex server or play local files. Chapter navigation, speed control, position sync." />
+  <meta property="og:url" content="https://plexbook.chrisclark.net/" />
+  <meta property="og:locale" content="en_US" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="PlexBook — Audiobook Player for Plex &amp; Local Files" />
+  <meta name="twitter:description" content="Stream audiobooks from your Plex server or play local files. Chapter navigation, speed control, position sync." />
+
+  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=1" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "PlexBook",
+    "url": "https://plexbook.chrisclark.net/",
+    "description": "Audiobook player that streams from Plex servers and plays local files.",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "Any (web browser)",
+    "browserRequirements": "Requires a modern web browser with JavaScript enabled.",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "author": {
+      "@type": "Person",
+      "name": "Chris Clark"
+    }
+  }
+  </script>
+
+  <link rel="stylesheet" href="styles.css" />
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem("theme");
+        var dark = saved === "dark" || (!saved && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        if (dark) document.documentElement.setAttribute("data-theme", "dark");
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>PlexBook</h1>
+    <div class="user-area">
+      <button id="prefsBtn" class="btn ghost" title="Preferences" aria-label="Preferences">&#9881;</button>
+      <button id="addLocalBtn" class="btn ghost" title="Add local files" aria-label="Add local files">&#128193;</button>
+      <button id="plexStatus" class="btn ghost" hidden></button>
+      <button id="signInBtn" class="btn primary-sm">Connect Plex</button>
+    </div>
+  </header>
+
+  <!-- Preferences modal -->
+  <div id="prefsModal" class="modal" hidden>
+    <div class="modal-content">
+      <button id="prefsClose" class="modal-close" aria-label="Close">&times;</button>
+      <h2>Preferences</h2>
+      <div class="prefs-list">
+        <label class="field toggle">
+          <input type="checkbox" id="prefTheme" />
+          <span>Dark Mode</span>
+        </label>
+        <label class="field toggle">
+          <input type="checkbox" id="prefSpectrum" />
+          <span>Show audio spectrum instead of album art</span>
+        </label>
+      </div>
+      <div class="plex-settings">
+        <h3>Plex Connection</h3>
+        <div id="plexConnectionInfo" class="connection-info">Not connected</div>
+        <button id="disconnectPlexBtn" class="btn" hidden>Disconnect Plex</button>
+      </div>
+      <p class="prefs-note">Changes are saved to your browser cache.</p>
+    </div>
+  </div>
+
+  <!-- Add local files modal -->
+  <div id="addLocalModal" class="modal" hidden>
+    <div class="modal-content">
+      <button id="addLocalClose" class="modal-close" aria-label="Close">&times;</button>
+      <h2>Add Local Audiobooks</h2>
+      <p class="modal-hint">Select individual audio files or a folder. Each folder becomes one book.</p>
+      <div class="add-local-actions">
+        <button id="addFilesBtn" class="btn primary">Select Files</button>
+        <button id="addFolderBtn" class="btn primary">Select Folder</button>
+      </div>
+      <input type="file" id="fileInput" accept="audio/*" multiple hidden />
+      <input type="file" id="folderInput" webkitdirectory hidden />
+    </div>
+  </div>
+
+  <!-- Main content: Library view -->
+  <main id="libraryView" class="library-view">
+    <div class="library-toolbar">
+      <input type="search" id="searchInput" class="search-input" placeholder="Search library..." aria-label="Search library" />
+      <select id="sourceFilter" class="source-filter">
+        <option value="all">All Sources</option>
+        <option value="plex">Plex</option>
+        <option value="local">Local</option>
+      </select>
+    </div>
+    <div id="libraryGrid" class="library-grid">
+      <div class="empty-state">
+        <p>Your library is empty.</p>
+        <p>Connect a Plex server or add local files to get started.</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Player view (hidden until a book is selected) -->
+  <div id="playerView" class="player-view" hidden>
+    <button id="backToLibrary" class="btn ghost back-btn" aria-label="Back to library">&larr; Library</button>
+
+    <div class="player-layout">
+      <div class="player-art-wrap">
+        <img id="albumArt" class="album-art" src="" alt="Album art" />
+        <canvas id="spectrumCanvas" class="spectrum-canvas" hidden></canvas>
+      </div>
+
+      <div class="player-info">
+        <h2 id="bookTitle" class="book-title"></h2>
+        <p id="bookAuthor" class="book-author"></p>
+      </div>
+
+      <div class="player-progress">
+        <input type="range" id="seekBar" class="seek-bar" min="0" max="100" value="0" step="0.1" />
+        <div class="time-labels">
+          <span id="currentTime">0:00</span>
+          <span id="totalTime">0:00</span>
+        </div>
+      </div>
+
+      <div class="player-controls">
+        <button id="rewindBtn" class="btn control-btn" title="Rewind 30s" aria-label="Rewind 30 seconds">-30s</button>
+        <button id="playPauseBtn" class="btn control-btn play-btn" title="Play/Pause" aria-label="Play or Pause">&#9654;</button>
+        <button id="forwardBtn" class="btn control-btn" title="Forward 30s" aria-label="Forward 30 seconds">+30s</button>
+      </div>
+
+      <div class="player-extras">
+        <div class="speed-control">
+          <label for="speedSelect">Speed</label>
+          <select id="speedSelect">
+            <option value="0.25">0.25x</option>
+            <option value="0.5">0.5x</option>
+            <option value="0.75">0.75x</option>
+            <option value="1" selected>1x</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+            <option value="1.75">1.75x</option>
+            <option value="2">2x</option>
+            <option value="2.25">2.25x</option>
+            <option value="2.5">2.5x</option>
+            <option value="2.75">2.75x</option>
+            <option value="3">3x</option>
+          </select>
+        </div>
+
+        <div class="chapter-control">
+          <label for="chapterSelect">Chapter</label>
+          <select id="chapterSelect">
+            <option value="0">No chapters</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <section class="about" aria-labelledby="aboutHeading">
+    <h2 id="aboutHeading">About PlexBook</h2>
+    <p>PlexBook is a free audiobook player that streams non-DRM audiobooks from your Plex media server. You can also add local audio files directly. Multiple sources are merged into a single library sorted alphabetically.</p>
+
+    <h2>Features</h2>
+    <ul>
+      <li>Stream audiobooks from any Plex server via JWT authentication</li>
+      <li>Play local audio files or entire folders as books</li>
+      <li>Mixed library from multiple sources, sorted alphabetically</li>
+      <li>Chapter selection and playback speed from 0.25x to 3x</li>
+      <li>Automatic position saving every 10 seconds</li>
+      <li>Album art display with optional audio spectrum visualizer</li>
+      <li>Light and dark themes</li>
+      <li>Works as a web app and Android app</li>
+    </ul>
+  </section>
+
+  <footer class="footer">
+    <div class="donate">
+      <span>Enjoying PlexBook?</span>
+      <a class="btn donate-btn" href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=paypal@chrisclark.net&item_name=Buy+me+a+Diet+Pepsi&currency_code=USD" target="_blank" rel="noopener">Buy me a Diet Pepsi (PayPal)</a>
+      <a class="btn donate-btn" href="https://venmo.com/Christopher-Clark-1140" target="_blank" rel="noopener">Buy me a Diet Pepsi (Venmo)</a>
+    </div>
+    <div class="legal-links">
+      <a href="legal/privacy.html">Privacy</a>
+      <a href="legal/terms.html">Terms</a>
+    </div>
+    <div id="buildStamp" class="build-stamp"></div>
+  </footer>
+
+  <script src="capacitor.js"></script>
+  <script src="plex.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

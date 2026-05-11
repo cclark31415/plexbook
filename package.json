@@ -1,0 +1,22 @@
+{
+  "name": "plexbook",
+  "version": "1.0.0",
+  "description": "Audiobook player for Plex and local files",
+  "main": "www/index.html",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Chris Clark",
+  "license": "ISC",
+  "devDependencies": {
+    "@capacitor/cli": "^8.3.3"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/haptics": "^8.0.0",
+    "@capacitor/preferences": "^8.0.0",
+    "@nicepkg/capacitor-file-opener": "^1.0.0"
+  }
+}

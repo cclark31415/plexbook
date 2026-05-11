@@ -1,0 +1,16 @@
+{
+  "name": "PlexBook",
+  "short_name": "PlexBook",
+  "description": "Audiobook player for Plex and local files",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1410",
+  "theme_color": "#e5a00d",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    }
+  ]
+}
