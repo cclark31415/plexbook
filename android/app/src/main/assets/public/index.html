@@ -87,9 +87,25 @@
       <div class="plex-settings">
         <h3>Plex Connection</h3>
         <div id="plexConnectionInfo" class="connection-info">Not connected</div>
+        <button id="changePlexLibsBtn" class="btn" hidden>Change Libraries</button>
         <button id="disconnectPlexBtn" class="btn" hidden>Disconnect Plex</button>
       </div>
       <p class="prefs-note">Changes are saved to your browser cache.</p>
+    </div>
+  </div>
+
+  <!-- Plex library picker modal -->
+  <div id="plexLibraryModal" class="modal" hidden>
+    <div class="modal-content">
+      <button id="plexLibraryClose" class="modal-close" aria-label="Close">&times;</button>
+      <h2>Select Plex Libraries</h2>
+      <p class="modal-hint">Choose which libraries to load audiobooks from.</p>
+      <div id="plexLibraryList" class="plex-library-list">
+        <p class="modal-hint">Loading libraries...</p>
+      </div>
+      <div class="plex-library-actions">
+        <button id="plexLibraryConfirm" class="btn primary" disabled>Load Selected</button>
+      </div>
     </div>
   </div>
 

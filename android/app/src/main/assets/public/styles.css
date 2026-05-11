@@ -153,6 +153,53 @@ html, body {
 
 .add-local-actions { display: flex; gap: 12px; }
 
+/* Plex library picker */
+.plex-library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.plex-library-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.plex-library-item:hover { border-color: var(--accent); }
+.plex-library-item.selected {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+.plex-library-item input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.plex-library-item-info { flex: 1; min-width: 0; }
+.plex-library-item-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.plex-library-item-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.plex-library-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* Library view */
 .library-view { padding: 16px 20px; max-width: 1200px; margin: 0 auto; }
 

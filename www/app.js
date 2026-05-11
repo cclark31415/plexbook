@@ -297,6 +297,8 @@ function disconnectPlex() {
   state.plexToken = null;
   state.plexServer = null;
   state.plexServerUrl = null;
+  state.selectedLibraryKeys = [];
+  state.plexLibraries = [];
   savePlexAuth();
   state.library = state.library.filter((b) => b.source !== "plex");
   updatePlexUI();
@@ -310,17 +312,23 @@ function updatePlexUI() {
   const connInfo = $("plexConnectionInfo");
   const disconnBtn = $("disconnectPlexBtn");
 
+  const changeLibsBtn = $("changePlexLibsBtn");
+
   if (state.plexToken && state.plexServer) {
     signInBtn.hidden = true;
     plexStatusBtn.hidden = false;
     plexStatusBtn.textContent = state.plexServer.name;
-    connInfo.textContent = "Connected to " + state.plexServer.name;
+    const libCount = state.selectedLibraryKeys.length;
+    connInfo.textContent = "Connected to " + state.plexServer.name +
+      (libCount > 0 ? ` (${libCount} librar${libCount === 1 ? "y" : "ies"} selected)` : "");
     disconnBtn.hidden = false;
+    changeLibsBtn.hidden = false;
   } else {
     signInBtn.hidden = false;
     plexStatusBtn.hidden = true;
     connInfo.textContent = "Not connected";
     disconnBtn.hidden = true;
+    changeLibsBtn.hidden = true;
   }
 }
 
@@ -652,12 +660,20 @@ function init() {
   $("prefTheme").checked = isDark;
 
   updatePlexUI();
-  if (state.plexToken) loadPlexLibrary();
+  if (state.plexToken && state.selectedLibraryKeys.length > 0) loadPlexLibrary();
   renderLibrary();
 
   // Plex auth
   $("signInBtn").addEventListener("click", startPlexAuth);
   $("disconnectPlexBtn").addEventListener("click", disconnectPlex);
+
+  // Plex library picker
+  $("plexLibraryConfirm").addEventListener("click", confirmPlexLibraries);
+  $("plexLibraryClose").addEventListener("click", () => ($("plexLibraryModal").hidden = true));
+  $("changePlexLibsBtn").addEventListener("click", () => {
+    $("prefsModal").hidden = true;
+    showPlexLibraryPicker();
+  });
 
   // Local files
   $("addLocalBtn").addEventListener("click", () => ($("addLocalModal").hidden = false));

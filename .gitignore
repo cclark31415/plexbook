@@ -7,3 +7,4 @@ android/capacitor-android/
 *.iml
 .idea/
 .DS_Store
+.claude/
