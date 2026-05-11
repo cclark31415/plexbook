@@ -277,12 +277,13 @@ async function loadPlexLibrary() {
     for (const lib of selectedLibs) {
       const albums = await PlexAPI.getAudiobooks(state.plexServerUrl, lib.key, state.plexToken);
       for (const album of albums) {
+        const hasOwnArt = album.thumb && album.thumb !== album.parentThumb;
         state.library.push({
           id: "plex-" + album.ratingKey,
           title: album.title,
           author: album.parentTitle || "",
           source: "plex",
-          thumb: PlexAPI.getThumbUrl(state.plexServerUrl, album.thumb, state.plexToken),
+          thumb: hasOwnArt ? PlexAPI.getThumbUrl(state.plexServerUrl, album.thumb, state.plexToken) : "",
           ratingKey: album.ratingKey,
         });
       }
@@ -413,7 +414,7 @@ async function openBook(bookId) {
 
   $("libraryView").hidden = true;
   $("playerView").hidden = false;
-  document.querySelector(".about").hidden = true;
+
   document.querySelector(".footer").hidden = true;
 
   $("bookTitle").textContent = book.title;
@@ -557,7 +558,7 @@ function backToLibrary() {
   stopSpectrum();
   $("playerView").hidden = true;
   $("libraryView").hidden = false;
-  document.querySelector(".about").hidden = false;
+
   document.querySelector(".footer").hidden = false;
   renderLibrary();
 }

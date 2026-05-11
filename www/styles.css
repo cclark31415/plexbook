@@ -144,6 +144,16 @@ html, body {
   border-top: 1px solid var(--border);
   padding-top: 12px;
 }
+.prefs-about {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.prefs-about h3 { margin: 12px 0 6px; color: var(--accent); font-size: 0.95rem; text-transform: uppercase; }
+.prefs-about h3:first-child { margin-top: 0; }
+.prefs-about p { font-size: 0.85rem; color: var(--muted); margin: 0 0 8px; line-height: 1.5; }
+.prefs-about ul { margin: 0; padding-left: 18px; font-size: 0.85rem; color: var(--muted); line-height: 1.5; }
+.prefs-about li { margin-bottom: 3px; }
 
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; color: var(--muted); }
 .field.toggle { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
