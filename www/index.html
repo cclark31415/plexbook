@@ -22,8 +22,8 @@
   <meta name="twitter:title" content="PlexBook — Audiobook Player for Plex &amp; Local Files" />
   <meta name="twitter:description" content="Stream audiobooks from your Plex server or play local files. Chapter navigation, speed control, position sync." />
 
-  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=1" />
-  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/x-icon" href="favicon.ico?v=1" />
+  <link rel="manifest" href="manifest.webmanifest" />
 
   <script type="application/ld+json">
   {
@@ -93,6 +93,21 @@
     </div>
   </div>
 
+  <!-- Plex library picker modal -->
+  <div id="plexLibraryModal" class="modal" hidden>
+    <div class="modal-content">
+      <button id="plexLibraryClose" class="modal-close" aria-label="Close">&times;</button>
+      <h2>Select Plex Libraries</h2>
+      <p class="modal-hint">Choose which libraries to load audiobooks from.</p>
+      <div id="plexLibraryList" class="plex-library-list">
+        <p class="modal-hint">Loading libraries...</p>
+      </div>
+      <div class="plex-library-actions">
+        <button id="plexLibraryConfirm" class="btn primary" disabled>Load Selected</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Add local files modal -->
   <div id="addLocalModal" class="modal" hidden>
     <div class="modal-content">
@@ -104,7 +119,7 @@
         <button id="addFolderBtn" class="btn primary">Select Folder</button>
       </div>
       <input type="file" id="fileInput" accept="audio/*" multiple hidden />
-      <input type="file" id="folderInput" webkitdirectory hidden />
+      <input type="file" id="folderInput" webkitdirectory="webkitdirectory" hidden />
     </div>
   </div>
 
@@ -112,6 +127,7 @@
   <main id="libraryView" class="library-view">
     <div class="library-toolbar">
       <input type="search" id="searchInput" class="search-input" placeholder="Search library..." aria-label="Search library" />
+      <label for="sourceFilter" class="sr-only">Filter by source</label>
       <select id="sourceFilter" class="source-filter">
         <option value="all">All Sources</option>
         <option value="plex">Plex</option>
@@ -142,6 +158,7 @@
       </div>
 
       <div class="player-progress">
+        <label for="seekBar" class="sr-only">Seek position</label>
         <input type="range" id="seekBar" class="seek-bar" min="0" max="100" value="0" step="0.1" />
         <div class="time-labels">
           <span id="currentTime">0:00</span>

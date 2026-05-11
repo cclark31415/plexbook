@@ -22,8 +22,8 @@
   <meta name="twitter:title" content="PlexBook — Audiobook Player for Plex &amp; Local Files" />
   <meta name="twitter:description" content="Stream audiobooks from your Plex server or play local files. Chapter navigation, speed control, position sync." />
 
-  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=1" />
-  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/x-icon" href="favicon.ico?v=1" />
+  <link rel="manifest" href="manifest.webmanifest" />
 
   <script type="application/ld+json">
   {
@@ -104,7 +104,7 @@
         <button id="addFolderBtn" class="btn primary">Select Folder</button>
       </div>
       <input type="file" id="fileInput" accept="audio/*" multiple hidden />
-      <input type="file" id="folderInput" webkitdirectory hidden />
+      <input type="file" id="folderInput" webkitdirectory="webkitdirectory" hidden />
     </div>
   </div>
 
@@ -112,6 +112,7 @@
   <main id="libraryView" class="library-view">
     <div class="library-toolbar">
       <input type="search" id="searchInput" class="search-input" placeholder="Search library..." aria-label="Search library" />
+      <label for="sourceFilter" class="sr-only">Filter by source</label>
       <select id="sourceFilter" class="source-filter">
         <option value="all">All Sources</option>
         <option value="plex">Plex</option>
@@ -142,6 +143,7 @@
       </div>
 
       <div class="player-progress">
+        <label for="seekBar" class="sr-only">Seek position</label>
         <input type="range" id="seekBar" class="seek-bar" min="0" max="100" value="0" step="0.1" />
         <div class="time-labels">
           <span id="currentTime">0:00</span>

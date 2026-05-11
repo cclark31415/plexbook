@@ -20,6 +20,8 @@ const state = {
   sourceNode: null,
   animFrameId: null,
   pinPollTimer: null,
+  plexLibraries: [],
+  selectedLibraryKeys: [],
 };
 
 function $(id) { return document.getElementById(id); }
@@ -89,10 +91,12 @@ function savePlexAuth() {
     localStorage.setItem("plexbook_token", state.plexToken);
     localStorage.setItem("plexbook_server_url", state.plexServerUrl);
     localStorage.setItem("plexbook_server_name", state.plexServer?.name || "Plex Server");
+    localStorage.setItem("plexbook_selected_libraries", JSON.stringify(state.selectedLibraryKeys));
   } else {
     localStorage.removeItem("plexbook_token");
     localStorage.removeItem("plexbook_server_url");
     localStorage.removeItem("plexbook_server_name");
+    localStorage.removeItem("plexbook_selected_libraries");
   }
 }
 
@@ -103,6 +107,9 @@ function loadPlexAuth() {
   if (state.plexToken && state.plexServerUrl) {
     state.plexServer = { name: name || "Plex Server" };
   }
+  try {
+    state.selectedLibraryKeys = JSON.parse(localStorage.getItem("plexbook_selected_libraries")) || [];
+  } catch { state.selectedLibraryKeys = []; }
 }
 
 // Library rendering
@@ -188,22 +195,86 @@ async function selectPlexServer() {
     state.plexServerUrl = conn.uri;
     savePlexAuth();
     updatePlexUI();
-    await loadPlexLibrary();
     toast("Connected to " + server.name);
+    await showPlexLibraryPicker();
   } catch (e) {
     toast("Failed to connect to Plex: " + e.message);
   }
 }
 
-async function loadPlexLibrary() {
+async function showPlexLibraryPicker() {
   if (!state.plexToken || !state.plexServerUrl) return;
 
+  const list = $("plexLibraryList");
+  const confirmBtn = $("plexLibraryConfirm");
+  list.innerHTML = '<p class="modal-hint">Loading libraries...</p>';
+  confirmBtn.disabled = true;
+  $("plexLibraryModal").hidden = false;
+
   try {
-    const musicLibs = await PlexAPI.getMusicLibraries(state.plexServerUrl, state.plexToken);
+    const allLibs = await PlexAPI.getLibraries(state.plexServerUrl, state.plexToken);
+    state.plexLibraries = allLibs;
+
+    if (allLibs.length === 0) {
+      list.innerHTML = '<p class="modal-hint">No libraries found on this server.</p>';
+      return;
+    }
+
+    const typeLabels = { artist: "Music", movie: "Movies", show: "TV Shows", photo: "Photos" };
+    const savedKeys = state.selectedLibraryKeys;
+
+    list.innerHTML = allLibs.map((lib) => {
+      const checked = savedKeys.includes(lib.key) ? "checked" : "";
+      const typeName = typeLabels[lib.type] || lib.type;
+      return `<label class="plex-library-item ${checked ? "selected" : ""}" data-key="${lib.key}">
+        <input type="checkbox" value="${lib.key}" ${checked} />
+        <div class="plex-library-item-info">
+          <div class="plex-library-item-title">${lib.title}</div>
+          <div class="plex-library-item-meta">${typeName}</div>
+        </div>
+      </label>`;
+    }).join("");
+
+    list.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        cb.closest(".plex-library-item").classList.toggle("selected", cb.checked);
+        confirmBtn.disabled = !list.querySelector("input:checked");
+      });
+    });
+
+    confirmBtn.disabled = !list.querySelector("input:checked");
+  } catch (e) {
+    list.innerHTML = `<p class="modal-hint">Failed to load libraries: ${e.message}</p>`;
+  }
+}
+
+function confirmPlexLibraries() {
+  const list = $("plexLibraryList");
+  const checked = list.querySelectorAll("input[type=checkbox]:checked");
+  state.selectedLibraryKeys = Array.from(checked).map((cb) => cb.value);
+  savePlexAuth();
+  $("plexLibraryModal").hidden = true;
+  loadPlexLibrary();
+}
+
+async function loadPlexLibrary() {
+  if (!state.plexToken || !state.plexServerUrl) return;
+  if (state.selectedLibraryKeys.length === 0) {
+    state.library = state.library.filter((b) => b.source !== "plex");
+    renderLibrary();
+    return;
+  }
+
+  try {
+    const allLibs = state.plexLibraries.length > 0
+      ? state.plexLibraries
+      : await PlexAPI.getLibraries(state.plexServerUrl, state.plexToken);
+
+    const selectedLibs = allLibs.filter((l) => state.selectedLibraryKeys.includes(l.key));
 
     state.library = state.library.filter((b) => b.source !== "plex");
 
-    for (const lib of musicLibs) {
+    for (const lib of selectedLibs) {
       const albums = await PlexAPI.getAudiobooks(state.plexServerUrl, lib.key, state.plexToken);
       for (const album of albums) {
         state.library.push({
