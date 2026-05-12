@@ -75,12 +75,31 @@
   }
 
   async function getAlbumTracks(serverUrl, ratingKey, token) {
-    const resp = await fetch(`${serverUrl}/library/metadata/${ratingKey}/children`, {
+    const resp = await fetch(`${serverUrl}/library/metadata/${ratingKey}/children?includeChapters=1`, {
       headers: headers(token),
     });
     if (!resp.ok) throw new Error("Failed to fetch tracks");
     const data = await resp.json();
-    return data.MediaContainer.Metadata || [];
+    const tracks = data.MediaContainer.Metadata || [];
+    await Promise.all(tracks.map(async (t) => {
+      if (!t.Chapter || t.Chapter.length === 0) {
+        try {
+          const chapters = await getTrackChapters(serverUrl, t.ratingKey, token);
+          if (chapters.length > 0) t.Chapter = chapters;
+        } catch {}
+      }
+    }));
+    return tracks;
+  }
+
+  async function getTrackChapters(serverUrl, ratingKey, token) {
+    const resp = await fetch(`${serverUrl}/library/metadata/${ratingKey}?includeChapters=1`, {
+      headers: headers(token),
+    });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    const md = (data.MediaContainer.Metadata || [])[0];
+    return (md && md.Chapter) || [];
   }
 
   function getStreamUrl(serverUrl, partKey, token) {
