@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Open book -->
+    <path
+        android:fillColor="#e5a00d"
+        android:pathData="M54,72 L54,38 C54,38 46,34 34,34 C26,34 20,36 20,36 L20,70 C20,70 26,68 34,68 C46,68 54,72 54,72 Z" />
+    <path
+        android:fillColor="#c4880a"
+        android:pathData="M54,72 L54,38 C54,38 62,34 74,34 C82,34 88,36 88,36 L88,70 C88,70 82,68 74,68 C62,68 54,72 54,72 Z" />
+
+    <!-- Book spine line -->
+    <path
+        android:fillColor="#1a1410"
+        android:pathData="M53,38 L55,38 L55,72 L53,72 Z" />
+
+    <!-- Page lines left -->
+    <path
+        android:strokeColor="#1a1410"
+        android:strokeWidth="0.8"
+        android:fillColor="#00000000"
+        android:pathData="M28,42 L48,44" />
+    <path
+        android:strokeColor="#1a1410"
+        android:strokeWidth="0.8"
+        android:fillColor="#00000000"
+        android:pathData="M28,48 L48,50" />
+    <path
+        android:strokeColor="#1a1410"
+        android:strokeWidth="0.8"
+        android:fillColor="#00000000"
+        android:pathData="M28,54 L48,56" />
+    <path
+        android:strokeColor="#1a1410"
+        android:strokeWidth="0.8"
+        android:fillColor="#00000000"
+        android:pathData="M28,60 L48,62" />
+
+    <!-- Page lines right -->
+    <path
+        android:strokeColor="#1a1410"
+        android:strokeWidth="0.8"
+        android:fillColor="#00000000"
+        android:pathData="M60,44 L80,42" />
+    <path
+        android:strokeColor="#1a1410"
+        android:strokeWidth="0.8"
+        android:fillColor="#00000000"
+        android:pathData="M60,50 L80,48" />
+    <path
+        android:strokeColor="#1a1410"
+        android:strokeWidth="0.8"
+        android:fillColor="#00000000"
+        android:pathData="M60,56 L80,54" />
+    <path
+        android:strokeColor="#1a1410"
+        android:strokeWidth="0.8"
+        android:fillColor="#00000000"
+        android:pathData="M60,62 L80,60" />
+
+    <!-- Headphone band -->
+    <path
+        android:strokeColor="#e5a00d"
+        android:strokeWidth="3.5"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round"
+        android:pathData="M33,44 C33,28 43,22 54,22 C65,22 75,28 75,44" />
+
+    <!-- Left ear cup -->
+    <path
+        android:fillColor="#e5a00d"
+        android:pathData="M28,40 C26,40 24,42 24,44 L24,52 C24,54 26,56 28,56 L32,56 C34,56 35,55 35,53 L35,43 C35,41 34,40 32,40 Z" />
+
+    <!-- Right ear cup -->
+    <path
+        android:fillColor="#e5a00d"
+        android:pathData="M76,40 C74,40 73,41 73,43 L73,53 C73,55 74,56 76,56 L80,56 C82,56 84,54 84,52 L84,44 C84,42 82,40 80,40 Z" />
+</vector>

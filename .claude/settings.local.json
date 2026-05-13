@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(Get-ChildItem -Path \"D:\\\\dev\\\\\" -Directory | Select-Object Name)",
-      "Bash(pwd && find /d/dev -maxdepth 2 -type d -name \"*sudoku*\" 2>/dev/null | head -20)",
-      "Bash(git add *)"
-    ]
-  }
-}

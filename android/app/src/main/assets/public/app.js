@@ -400,26 +400,20 @@ async function openBook(bookId) {
         name: t.title,
         duration: t.duration / 1000,
         url: PlexAPI.getStreamUrl(state.plexServerUrl, t.Media[0].Part[0].key, state.plexToken),
-        chapters: (t.Chapter || []).map((c) => ({
-          name: c.tag || c.title || "",
-          startOffset: (c.startTimeOffset || 0) / 1000,
-          endOffset: (c.endTimeOffset || 0) / 1000,
-        })),
+        chapters: t.Chapter || [], // <--- ADD THIS LINE
       }));
     } catch (e) {
       toast("Failed to load tracks: " + e.message);
       return;
     }
   } else {
-    state.tracks = (book.tracks || []).map((t) => ({ ...t, chapters: t.chapters || [] }));
+    state.tracks = book.tracks || [];
   }
 
   if (state.tracks.length === 0) {
     toast("No tracks found for this book");
     return;
   }
-
-  buildChapters();
 
   $("libraryView").hidden = true;
   $("playerView").hidden = false;
@@ -437,6 +431,14 @@ async function openBook(bookId) {
     art.src = "";
   }
 
+  // Download feature
+  const downloadBtn = $("downloadBookBtn");
+  if (book.source === "plex" && state.plexServer && state.plexServer.owned) {
+    downloadBtn.hidden = false;
+  } else {
+    downloadBtn.hidden = true;
+  }
+
   populateChapters();
 
   const pos = state.positions[book.id];
@@ -445,65 +447,22 @@ async function openBook(bookId) {
   loadTrack(trackIdx, time);
 }
 
-function buildChapters() {
-  state.chapters = [];
-  state.tracks.forEach((t, ti) => {
-    if (t.chapters && t.chapters.length > 0) {
-      t.chapters.forEach((c, ci) => {
-        state.chapters.push({
-          name: c.name || `Chapter ${state.chapters.length + 1}`,
-          trackIndex: ti,
-          startOffset: c.startOffset,
-        });
-      });
-    } else {
-      state.chapters.push({
-        name: t.name || `Track ${ti + 1}`,
-        trackIndex: ti,
-        startOffset: 0,
-      });
-    }
-  });
-}
-
 function populateChapters() {
   const sel = $("chapterSelect");
   sel.innerHTML = "";
-  state.chapters.forEach((c, i) => {
+  state.tracks.forEach((t, i) => {
     const opt = document.createElement("option");
     opt.value = i;
-    opt.textContent = c.name;
+    opt.textContent = t.name || `Track ${i + 1}`;
     sel.appendChild(opt);
   });
-}
-
-function chapterIndexFor(trackIndex, time) {
-  let last = 0;
-  for (let i = 0; i < state.chapters.length; i++) {
-    const c = state.chapters[i];
-    if (c.trackIndex < trackIndex) { last = i; continue; }
-    if (c.trackIndex > trackIndex) break;
-    if (c.startOffset <= time) last = i;
-    else break;
-  }
-  return last;
-}
-
-function updateChapterSelection() {
-  if (!state.audio) return;
-  const idx = chapterIndexFor(state.currentTrackIndex, state.audio.currentTime || 0);
-  if (idx !== state.currentChapterIndex) {
-    state.currentChapterIndex = idx;
-    $("chapterSelect").value = idx;
-  }
 }
 
 function loadTrack(index, startTime = 0) {
   if (index < 0 || index >= state.tracks.length) return;
 
   state.currentTrackIndex = index;
-  state.currentChapterIndex = chapterIndexFor(index, startTime);
-  $("chapterSelect").value = state.currentChapterIndex;
+  $("chapterSelect").value = index;
 
   if (state.audio) {
     state.audio.pause();
@@ -542,8 +501,6 @@ function onTimeUpdate() {
   const bar = $("seekBar");
   const pct = state.audio.duration ? (state.audio.currentTime / state.audio.duration) * 100 : 0;
   bar.style.background = `linear-gradient(to right, var(--seek-fill) ${pct}%, var(--seek-track) ${pct}%)`;
-
-  updateChapterSelection();
 }
 
 function onTrackEnded() {
@@ -754,21 +711,38 @@ function init() {
   $("rewindBtn").addEventListener("click", () => seekRelative(-30));
   $("forwardBtn").addEventListener("click", () => seekRelative(30));
 
+  $("downloadBookBtn").addEventListener("click", async () => {
+    if (!state.currentBook || state.currentBook.source !== "plex") {
+      toast("Can only download Plex audiobooks.");
+      return;
+    }
+
+    toast(`Starting download for "${state.currentBook.title}"...`);
+
+    for (const track of state.tracks) {
+      try {
+        // Use a simple anchor link trigger without complex DOM logic
+        const a = document.createElement("a");
+        a.href = track.url;
+        a.download = track.name.replace(/[\\/:*?"<>&%]/g, '_') + ".mp3";
+        a.style.display = "none";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } catch (e) {
+        console.error("Download failed:", e);
+        toast(`Failed to download ${track.name}.`);
+      }
+    }
+  });
+
   $("speedSelect").addEventListener("change", (e) => {
     state.speed = parseFloat(e.target.value);
     if (state.audio) state.audio.playbackRate = state.speed;
   });
 
   $("chapterSelect").addEventListener("change", (e) => {
-    const idx = parseInt(e.target.value);
-    const ch = state.chapters[idx];
-    if (!ch) return;
-    state.currentChapterIndex = idx;
-    if (ch.trackIndex === state.currentTrackIndex && state.audio) {
-      state.audio.currentTime = ch.startOffset;
-    } else {
-      loadTrack(ch.trackIndex, ch.startOffset);
-    }
+    loadTrack(parseInt(e.target.value), 0);
   });
 
   $("seekBar").addEventListener("input", (e) => {
