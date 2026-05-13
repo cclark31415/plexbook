@@ -439,7 +439,6 @@ html, body {
   gap: 16px;
   width: 100%;
   justify-content: center;
-  align-items: center; /* Align items vertically */
 }
 .speed-control, .chapter-control {
   display: flex;

@@ -16,6 +16,7 @@ const state = {
   speed: 1,
   positionTimer: null,
   positions: {},
+  downloads: {},
   spectrumEnabled: false,
   analyser: null,
   audioCtx: null,
@@ -27,6 +28,30 @@ const state = {
 };
 
 function $(id) { return document.getElementById(id); }
+
+let _filesystem = null;
+function getFilesystem() {
+  if (_filesystem) return _filesystem;
+  if (window.Capacitor && window.Capacitor.registerPlugin) {
+    _filesystem = window.Capacitor.registerPlugin("Filesystem");
+  }
+  return _filesystem;
+}
+function isNative() {
+  return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+function toPlayableSrc(uri) {
+  if (window.Capacitor && window.Capacitor.convertFileSrc) return window.Capacitor.convertFileSrc(uri);
+  return uri;
+}
+function safeFilename(s) {
+  return (s || "untitled").replace(/[\\/:*?"<>|]/g, "_").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+function extFor(url, container) {
+  if (container) return "." + container.toLowerCase();
+  const m = (url || "").match(/\.([a-z0-9]+)(\?|$)/i);
+  return m ? "." + m[1].toLowerCase() : ".m4b";
+}
 
 function sortKey(title) {
   return title.replace(ARTICLES, "").toLowerCase();
@@ -62,6 +87,16 @@ function loadPositions() {
   try {
     state.positions = JSON.parse(localStorage.getItem("plexbook_positions")) || {};
   } catch { state.positions = {}; }
+}
+
+function saveDownloads() {
+  localStorage.setItem("plexbook_downloads", JSON.stringify(state.downloads));
+}
+
+function loadDownloads() {
+  try {
+    state.downloads = JSON.parse(localStorage.getItem("plexbook_downloads")) || {};
+  } catch { state.downloads = {}; }
 }
 
 function saveLibrary() {
@@ -396,22 +431,43 @@ async function openBook(bookId) {
   if (book.source === "plex") {
     try {
       const tracks = await PlexAPI.getAlbumTracks(state.plexServerUrl, book.ratingKey, state.plexToken);
-      state.tracks = tracks.map((t) => ({
-        name: t.title,
-        duration: t.duration / 1000,
-        url: PlexAPI.getStreamUrl(state.plexServerUrl, t.Media[0].Part[0].key, state.plexToken),
-      }));
+      state.tracks = tracks.map((t) => {
+        const part = (t.Media && t.Media[0] && t.Media[0].Part && t.Media[0].Part[0]) || {};
+        return {
+          name: t.title,
+          duration: t.duration / 1000,
+          url: PlexAPI.getStreamUrl(state.plexServerUrl, part.key, state.plexToken),
+          container: part.container || null,
+          chapters: [],
+        };
+      });
     } catch (e) {
       toast("Failed to load tracks: " + e.message);
       return;
     }
   } else {
-    state.tracks = book.tracks || [];
+    state.tracks = (book.tracks || []).map((t) => ({ ...t, chapters: t.chapters || [] }));
   }
 
   if (state.tracks.length === 0) {
     toast("No tracks found for this book");
     return;
+  }
+
+  const dl = state.downloads[book.id];
+  if (dl && dl.uris && dl.uris.length === state.tracks.length) {
+    state.tracks.forEach((t, i) => { t.url = toPlayableSrc(dl.uris[i]); t.localUri = dl.uris[i]; });
+    if (dl.chapters && dl.chapters.length > 0) {
+      state.tracks[0].chapters = dl.chapters;
+    }
+  }
+
+  if (book.source === "local" && state.tracks[0] && state.tracks[0].file
+      && (!state.tracks[0].chapters || state.tracks[0].chapters.length === 0)) {
+    try {
+      const parsed = await ChapterParser.parseChapters(state.tracks[0].file);
+      state.tracks[0].chapters = parsed.map((c) => ({ name: c.title, startOffset: c.startTime }));
+    } catch (e) { console.warn("Local chapter parse failed:", e); }
   }
 
   $("libraryView").hidden = true;
@@ -430,7 +486,14 @@ async function openBook(bookId) {
     art.src = "";
   }
 
+  buildChapters();
   populateChapters();
+
+  const downloadBtn = $("downloadBookBtn");
+  if (downloadBtn) {
+    const alreadyDownloaded = !!(state.downloads[book.id] && state.downloads[book.id].uris);
+    downloadBtn.hidden = !(book.source === "plex" && isNative()) || alreadyDownloaded;
+  }
 
   const pos = state.positions[book.id];
   const trackIdx = pos ? (pos.trackIndex || 0) : 0;
@@ -438,22 +501,144 @@ async function openBook(bookId) {
   loadTrack(trackIdx, time);
 }
 
+async function downloadCurrentBook() {
+  const book = state.currentBook;
+  if (!book || book.source !== "plex") {
+    toast("Can only download Plex audiobooks.");
+    return;
+  }
+  if (!isNative()) {
+    toast("Downloads are only available in the mobile app.");
+    return;
+  }
+  const Filesystem = getFilesystem();
+  if (!Filesystem) {
+    toast("Filesystem plugin not available.");
+    return;
+  }
+
+  const btn = $("downloadBookBtn");
+  if (btn) btn.disabled = true;
+
+  const folder = "audiobooks/" + safeFilename(book.title);
+  const uris = [];
+  let progressListener;
+  try {
+    progressListener = await Filesystem.addListener("progress", (event) => {
+      if (event && event.contentLength) {
+        const pct = Math.round((event.bytes / event.contentLength) * 100);
+        if (btn) btn.textContent = `Downloading… ${pct}%`;
+      }
+    });
+
+    for (let i = 0; i < state.tracks.length; i++) {
+      const track = state.tracks[i];
+      const ext = extFor(track.url, track.container);
+      const filename = state.tracks.length === 1
+        ? safeFilename(book.title) + ext
+        : String(i + 1).padStart(3, "0") + " - " + safeFilename(track.name) + ext;
+      const path = folder + "/" + filename;
+      if (btn) btn.textContent = `Downloading ${i + 1}/${state.tracks.length}…`;
+      const result = await Filesystem.downloadFile({
+        url: track.url,
+        path,
+        directory: "DATA",
+        recursive: true,
+        progress: true,
+      });
+      uris.push(result.path);
+    }
+  } catch (e) {
+    console.error("Download failed:", e);
+    toast("Download failed: " + (e.message || e));
+    if (btn) { btn.disabled = false; btn.textContent = "⬇ Download"; }
+    if (progressListener) progressListener.remove();
+    return;
+  }
+  if (progressListener) progressListener.remove();
+
+  let parsedChapters = [];
+  try {
+    if (btn) btn.textContent = "Parsing chapters…";
+    const resp = await fetch(toPlayableSrc(uris[0]));
+    const blob = await resp.blob();
+    const parsed = await ChapterParser.parseChapters(blob);
+    parsedChapters = parsed.map((c) => ({ name: c.title, startOffset: c.startTime }));
+  } catch (e) {
+    console.warn("Chapter parse failed:", e);
+  }
+
+  state.downloads[book.id] = { uris, chapters: parsedChapters };
+  saveDownloads();
+
+  state.tracks.forEach((t, i) => { t.url = toPlayableSrc(uris[i]); t.localUri = uris[i]; });
+  if (parsedChapters.length > 0) state.tracks[0].chapters = parsedChapters;
+  buildChapters();
+  populateChapters();
+
+  if (btn) { btn.hidden = true; btn.disabled = false; btn.textContent = "⬇ Download"; }
+  toast(`Downloaded "${book.title}"` + (parsedChapters.length > 0 ? ` (${parsedChapters.length} chapters)` : ""));
+}
+
+function buildChapters() {
+  state.chapters = [];
+  state.tracks.forEach((t, ti) => {
+    if (t.chapters && t.chapters.length > 0) {
+      t.chapters.forEach((c) => {
+        state.chapters.push({
+          name: c.name || `Chapter ${state.chapters.length + 1}`,
+          trackIndex: ti,
+          startOffset: c.startOffset || 0,
+        });
+      });
+    } else {
+      state.chapters.push({
+        name: t.name || `Track ${ti + 1}`,
+        trackIndex: ti,
+        startOffset: 0,
+      });
+    }
+  });
+}
+
 function populateChapters() {
   const sel = $("chapterSelect");
   sel.innerHTML = "";
-  state.tracks.forEach((t, i) => {
+  state.chapters.forEach((c, i) => {
     const opt = document.createElement("option");
     opt.value = i;
-    opt.textContent = t.name || `Track ${i + 1}`;
+    opt.textContent = c.name;
     sel.appendChild(opt);
   });
+}
+
+function chapterIndexFor(trackIndex, time) {
+  let last = 0;
+  for (let i = 0; i < state.chapters.length; i++) {
+    const c = state.chapters[i];
+    if (c.trackIndex < trackIndex) { last = i; continue; }
+    if (c.trackIndex > trackIndex) break;
+    if (c.startOffset <= time) last = i;
+    else break;
+  }
+  return last;
+}
+
+function updateChapterSelection() {
+  if (!state.audio) return;
+  const idx = chapterIndexFor(state.currentTrackIndex, state.audio.currentTime || 0);
+  if (idx !== state.currentChapterIndex) {
+    state.currentChapterIndex = idx;
+    $("chapterSelect").value = idx;
+  }
 }
 
 function loadTrack(index, startTime = 0) {
   if (index < 0 || index >= state.tracks.length) return;
 
   state.currentTrackIndex = index;
-  $("chapterSelect").value = index;
+  state.currentChapterIndex = chapterIndexFor(index, startTime);
+  $("chapterSelect").value = state.currentChapterIndex;
 
   if (state.audio) {
     state.audio.pause();
@@ -492,6 +677,8 @@ function onTimeUpdate() {
   const bar = $("seekBar");
   const pct = state.audio.duration ? (state.audio.currentTime / state.audio.duration) * 100 : 0;
   bar.style.background = `linear-gradient(to right, var(--seek-fill) ${pct}%, var(--seek-track) ${pct}%)`;
+
+  updateChapterSelection();
 }
 
 function onTrackEnded() {
@@ -651,6 +838,7 @@ function setTheme(dark) {
 // Event wiring
 function init() {
   loadPositions();
+  loadDownloads();
   loadPlexAuth();
 
   const savedLocal = loadLocalLibrary();
@@ -708,8 +896,19 @@ function init() {
   });
 
   $("chapterSelect").addEventListener("change", (e) => {
-    loadTrack(parseInt(e.target.value), 0);
+    const idx = parseInt(e.target.value);
+    const ch = state.chapters[idx];
+    if (!ch) return;
+    state.currentChapterIndex = idx;
+    if (ch.trackIndex === state.currentTrackIndex && state.audio) {
+      state.audio.currentTime = ch.startOffset;
+    } else {
+      loadTrack(ch.trackIndex, ch.startOffset);
+    }
   });
+
+  const dlBtn = $("downloadBookBtn");
+  if (dlBtn) dlBtn.addEventListener("click", downloadCurrentBook);
 
   $("seekBar").addEventListener("input", (e) => {
     if (state.audio) state.audio.currentTime = parseFloat(e.target.value);

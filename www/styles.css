@@ -462,6 +462,20 @@ html, body {
 .chapter-control { flex: 1; max-width: 300px; }
 .chapter-control select { width: 100%; }
 
+.download-btn {
+  background: var(--accent);
+  color: #1b1510;
+  border-color: var(--accent);
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 50px;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.download-btn:hover { background: var(--accent-dark); }
+
 /* Toast */
 .toast {
   position: fixed;
