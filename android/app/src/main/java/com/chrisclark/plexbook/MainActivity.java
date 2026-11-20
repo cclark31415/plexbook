@@ -4,6 +4,7 @@ import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
 import java.net.FileNameMap;
 import java.net.URLConnection;
+import java.util.Locale;
 
 public class MainActivity extends BridgeActivity {
     @Override
@@ -13,7 +14,7 @@ public class MainActivity extends BridgeActivity {
             @Override
             public String getContentTypeFor(String fileName) {
                 if (fileName != null) {
-                    String lower = fileName.toLowerCase();
+                    String lower = fileName.toLowerCase(Locale.ROOT);
                     if (lower.endsWith(".m4b") || lower.endsWith(".m4a") || lower.endsWith(".mp4")) {
                         return "audio/mp4";
                     }
