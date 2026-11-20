@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#f4f0eb" media="(prefers-color-scheme: light)" />
   <meta name="theme-color" content="#1a1410" media="(prefers-color-scheme: dark)" />
 
@@ -163,7 +163,7 @@
     <button id="backToLibrary" class="btn ghost back-btn" aria-label="Back to library">&larr; Library</button>
 
     <div class="player-layout">
-      <div class="player-art-wrap">
+      <div id="playerArtWrap" class="player-art-wrap" role="button" tabindex="0" title="Tap to toggle visualizer / album art" aria-label="Toggle visualizer or album art">
         <img id="albumArt" class="album-art" src="" alt="Album art" />
         <canvas id="spectrumCanvas" class="spectrum-canvas" hidden></canvas>
       </div>
@@ -171,6 +171,7 @@
       <div class="player-info">
         <h2 id="bookTitle" class="book-title"></h2>
         <p id="bookAuthor" class="book-author"></p>
+        <span id="playerSourceBadge" class="player-source-badge" hidden></span>
       </div>
 
       <div class="player-progress">
@@ -184,7 +185,9 @@
 
       <div class="player-controls">
         <button id="rewindBtn" class="btn control-btn" title="Rewind 30s" aria-label="Rewind 30 seconds">-30s</button>
-        <button id="playPauseBtn" class="btn control-btn play-btn" title="Play/Pause" aria-label="Play or Pause">&#9654;</button>
+        <button id="playPauseBtn" class="btn control-btn play-btn" title="Play/Pause" aria-label="Play or Pause">
+          <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
         <button id="forwardBtn" class="btn control-btn" title="Forward 30s" aria-label="Forward 30 seconds">+30s</button>
       </div>
 

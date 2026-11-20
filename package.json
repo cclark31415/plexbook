@@ -4,7 +4,8 @@
   "description": "Audiobook player for Plex and local files",
   "main": "www/index.html",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "postinstall": "node -e \"const fs=require('fs');const p1='node_modules/@capacitor/filesystem/android/build.gradle';if(fs.existsSync(p1)){let c=fs.readFileSync(p1,'utf8');if(!c.includes('project.extensions.findByName')){c=c.replace('apply plugin: \\'kotlin-android\\'', 'if (!project.extensions.findByName(\\'kotlin\\')) { apply plugin: \\'kotlin-android\\' }');fs.writeFileSync(p1,c);}}const p2='node_modules/@capacitor/filesystem/android/src/main/kotlin/com/capacitorjs/plugins/filesystem/LegacyFilesystemImplementation.kt';if(fs.existsSync(p2)){let c=fs.readFileSync(p2,'utf8');if(!c.includes('file?.parentFile?.mkdirs()')){c=c.replace('val fileOutputStream = FileOutputStream(file, false)', 'file?.parentFile?.mkdirs()\\n        val fileOutputStream = FileOutputStream(file, false)');fs.writeFileSync(p2,c);}}\""
   },
   "keywords": [],
   "author": "Chris Clark",

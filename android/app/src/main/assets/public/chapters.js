@@ -1,27 +1,101 @@
 (function () {
   "use strict";
 
-  async function parseChapters(file) {
-    const buf = await readFileHeader(file, 50 * 1024 * 1024);
-    const view = new DataView(buf);
+  async function parseChapters(source) {
+    if (!source) return [];
+    try {
+      const reader = makeReader(source);
+      const fileSize = await reader.size();
+      if (!fileSize || fileSize < 8) return [];
 
-    const moov = findAtom(view, 0, buf.byteLength, "moov");
-    if (!moov) return [];
+      const moovLoc = await findTopLevelAtom(reader, fileSize, "moov");
+      if (!moovLoc) return [];
 
-    const chpl = findChplChapters(view, moov.offset, moov.size);
-    if (chpl.length > 0) return chpl;
+      const moovBuf = await reader.read(moovLoc.dataOffset, moovLoc.dataSize);
+      const moovView = new DataView(moovBuf);
 
-    return findQuickTimeChapters(view, buf, moov.offset, moov.size);
+      const chpl = findChplChapters(moovView, 0, moovBuf.byteLength);
+      if (chpl.length > 0) return chpl;
+
+      return await findQuickTimeChapters(reader, moovView, moovBuf);
+    } catch (e) {
+      console.warn("ChapterParser: parseChapters failed", e);
+      return [];
+    }
   }
 
-  function readFileHeader(file, maxBytes) {
-    const size = Math.min(file.size, maxBytes);
-    const slice = file.slice(0, size);
-    return slice.arrayBuffer();
+  function makeReader(source) {
+    if ((typeof Blob !== "undefined" && source instanceof Blob) ||
+        (typeof File !== "undefined" && source instanceof File) ||
+        (source && typeof source.slice === "function" && typeof source.size === "number")) {
+      return {
+        size: () => Promise.resolve(source.size),
+        read: (offset, length) => source.slice(offset, offset + length).arrayBuffer(),
+      };
+    }
+    if (typeof source === "string") {
+      let totalSize = null;
+      return {
+        size: async () => {
+          if (totalSize !== null) return totalSize;
+          try {
+            const resp = await fetch(source, { method: "HEAD" });
+            const cl = resp.headers.get("content-length");
+            if (cl) totalSize = parseInt(cl, 10);
+          } catch {}
+          if (!totalSize) {
+            // Fallback: request first byte to read content-range
+            try {
+              const resp = await fetch(source, { headers: { Range: "bytes=0-0" } });
+              const cr = resp.headers.get("content-range");
+              if (cr) {
+                const m = cr.match(/\/(\d+)$/);
+                if (m) totalSize = parseInt(m[1], 10);
+              }
+            } catch {}
+          }
+          return totalSize || 0;
+        },
+        read: async (offset, length) => {
+          const resp = await fetch(source, {
+            headers: { Range: `bytes=${offset}-${offset + length - 1}` },
+          });
+          return resp.arrayBuffer();
+        },
+      };
+    }
+    throw new Error("Unsupported source type for ChapterParser");
+  }
+
+  async function findTopLevelAtom(reader, fileSize, targetType) {
+    let pos = 0;
+    while (pos + 8 <= fileSize) {
+      const chunk = await reader.read(pos, 16);
+      if (chunk.byteLength < 8) break;
+      const hView = new DataView(chunk);
+      let size = hView.getUint32(0);
+      const type = String.fromCharCode(
+        hView.getUint8(4), hView.getUint8(5), hView.getUint8(6), hView.getUint8(7)
+      );
+      let headerSize = 8;
+      if (size === 1) {
+        if (chunk.byteLength < 16) break;
+        const hi = hView.getUint32(8);
+        const lo = hView.getUint32(12);
+        size = hi * 0x100000000 + lo;
+        headerSize = 16;
+      }
+      if (size < 8) break;
+      if (type === targetType) {
+        return { offset: pos, dataOffset: pos + headerSize, dataSize: size - headerSize };
+      }
+      pos += size;
+    }
+    return null;
   }
 
   function readUTF8(view, offset, length) {
-    const bytes = new Uint8Array(view.buffer, offset, length);
+    const bytes = new Uint8Array(view.buffer, view.byteOffset + offset, length);
     return new TextDecoder("utf-8").decode(bytes);
   }
 
@@ -64,9 +138,22 @@
     return cur;
   }
 
+  function findAllAtoms(view, start, end, type) {
+    const results = [];
+    let pos = start;
+    while (pos + 8 <= end) {
+      const size = getAtomSize(view, pos);
+      if (size < 8) break;
+      const t = getAtomType(view, pos + 4);
+      if (t === type) results.push({ offset: pos + 8, size: size - 8 });
+      pos += size;
+    }
+    return results;
+  }
+
   // Nero chapter format: moov > udta > chpl
-  function findChplChapters(view, moovOffset, moovSize) {
-    const chpl = findAtomPath(view, moovOffset, moovOffset + moovSize, ["udta", "chpl"]);
+  function findChplChapters(view, moovStart, moovSize) {
+    const chpl = findAtomPath(view, moovStart, moovStart + moovSize, ["udta", "chpl"]);
     if (!chpl) return [];
 
     const chapters = [];
@@ -74,8 +161,8 @@
     const end = chpl.offset + chpl.size;
 
     if (pos + 8 > end) return [];
-    pos += 4; // version
-    pos += 4; // unknown
+    pos += 4; // version + flags
+    pos += 4; // reserved
 
     if (pos + 1 > end) return [];
     const count = view.getUint8(pos);
@@ -103,31 +190,31 @@
   }
 
   // QuickTime chapter track format
-  function findQuickTimeChapters(view, buf, moovOffset, moovSize) {
-    const traks = findAllAtoms(view, moovOffset, moovOffset + moovSize, "trak");
+  async function findQuickTimeChapters(reader, moovView, moovBuf) {
+    const traks = findAllAtoms(moovView, 0, moovBuf.byteLength, "trak");
 
     let chapterTrakRef = null;
     let chapterTrak = null;
 
-    // Look for a tref/chap reference in audio tracks to find the chapter track ID
+    // Look for tref/chap reference in audio tracks
     for (const trak of traks) {
-      const tref = findAtom(view, trak.offset, trak.offset + trak.size, "tref");
+      const tref = findAtom(moovView, trak.offset, trak.offset + trak.size, "tref");
       if (!tref) continue;
-      const chap = findAtom(view, tref.offset, tref.offset + tref.size, "chap");
+      const chap = findAtom(moovView, tref.offset, tref.offset + tref.size, "chap");
       if (chap && chap.size >= 4) {
-        chapterTrakRef = view.getUint32(chap.offset);
+        chapterTrakRef = moovView.getUint32(chap.offset);
         break;
       }
     }
 
-    // Find chapter track by ID or by handler type 'text'
+    // Find chapter track by ID or by text handler type
     for (const trak of traks) {
-      const tkhd = findAtom(view, trak.offset, trak.offset + trak.size, "tkhd");
+      const tkhd = findAtom(moovView, trak.offset, trak.offset + trak.size, "tkhd");
       if (tkhd) {
-        const version = view.getUint8(tkhd.offset);
+        const version = moovView.getUint8(tkhd.offset);
         const trackId = version === 1
-          ? view.getUint32(tkhd.offset + 20)
-          : view.getUint32(tkhd.offset + 12);
+          ? moovView.getUint32(tkhd.offset + 20)
+          : moovView.getUint32(tkhd.offset + 12);
 
         if (chapterTrakRef && trackId === chapterTrakRef) {
           chapterTrak = trak;
@@ -135,27 +222,24 @@
         }
       }
 
-      // Fallback: check if this is a text handler track
-      const hdlr = findAtomPath(view, trak.offset, trak.offset + trak.size, ["mdia", "hdlr"]);
+      const hdlr = findAtomPath(moovView, trak.offset, trak.offset + trak.size, ["mdia", "hdlr"]);
       if (hdlr && hdlr.size >= 12) {
-        const handlerType = getAtomType(view, hdlr.offset + 8);
+        const handlerType = getAtomType(moovView, hdlr.offset + 8);
         if (handlerType === "text") {
           chapterTrak = trak;
-          // Don't break — prefer tref match
         }
       }
     }
 
     if (!chapterTrak) return [];
 
-    return extractChaptersFromTrak(view, buf, chapterTrak);
+    return await extractChaptersFromTrak(reader, moovView, chapterTrak);
   }
 
-  function extractChaptersFromTrak(view, buf, trak) {
+  async function extractChaptersFromTrak(reader, view, trak) {
     const mdia = findAtom(view, trak.offset, trak.offset + trak.size, "mdia");
     if (!mdia) return [];
 
-    // Get timescale from mdhd
     const mdhd = findAtom(view, mdia.offset, mdia.offset + mdia.size, "mdhd");
     if (!mdhd) return [];
     const mdhdVersion = view.getUint8(mdhd.offset);
@@ -187,28 +271,6 @@
       sttsPos += 8;
     }
 
-    // Get sample offsets from stco or co64
-    let sampleOffsets = [];
-    const stco = findAtom(view, stbl.offset, stbl.offset + stbl.size, "stco");
-    const co64 = findAtom(view, stbl.offset, stbl.offset + stbl.size, "co64");
-    if (stco) {
-      const count = view.getUint32(stco.offset + 4);
-      let p = stco.offset + 8;
-      for (let i = 0; i < count; i++) {
-        sampleOffsets.push(view.getUint32(p));
-        p += 4;
-      }
-    } else if (co64) {
-      const count = view.getUint32(co64.offset + 4);
-      let p = co64.offset + 8;
-      for (let i = 0; i < count; i++) {
-        const hi = view.getUint32(p);
-        const lo = view.getUint32(p + 4);
-        sampleOffsets.push(hi * 0x100000000 + lo);
-        p += 8;
-      }
-    }
-
     // Get sample sizes from stsz
     const stsz = findAtom(view, stbl.offset, stbl.offset + stbl.size, "stsz");
     let sampleSizes = [];
@@ -226,30 +288,54 @@
       }
     }
 
-    // Build chapters from sample data
+    // Get chunk offsets from stco or co64
+    let chunkOffsets = [];
+    const stco = findAtom(view, stbl.offset, stbl.offset + stbl.size, "stco");
+    const co64 = findAtom(view, stbl.offset, stbl.offset + stbl.size, "co64");
+    if (stco) {
+      const count = view.getUint32(stco.offset + 4);
+      let p = stco.offset + 8;
+      for (let i = 0; i < count; i++) {
+        chunkOffsets.push(view.getUint32(p));
+        p += 4;
+      }
+    } else if (co64) {
+      const count = view.getUint32(co64.offset + 4);
+      let p = co64.offset + 8;
+      for (let i = 0; i < count; i++) {
+        const hi = view.getUint32(p);
+        const lo = view.getUint32(p + 4);
+        chunkOffsets.push(hi * 0x100000000 + lo);
+        p += 8;
+      }
+    }
+
+    const sampleOffsets = buildSampleOffsets(view, stbl, chunkOffsets, sampleSizes);
+
     const chapters = [];
     let currentTime = 0;
     const numSamples = Math.min(durations.length, sampleOffsets.length, sampleSizes.length);
 
     for (let i = 0; i < numSamples; i++) {
-      const offset = sampleOffsets[i];
+      const fileOffset = sampleOffsets[i];
       const size = sampleSizes[i];
       const startSec = currentTime / timescale;
 
-      if (offset + size <= buf.byteLength) {
-        let title = "";
-        // Text samples may have a 2-byte length prefix
+      let title = "";
+      try {
+        const sampleBuf = await reader.read(fileOffset, size);
+        const sampleView = new DataView(sampleBuf);
         if (size >= 2) {
-          const textLen = view.getUint16(offset);
-          if (textLen > 0 && textLen <= size - 2 && offset + 2 + textLen <= buf.byteLength) {
-            title = readUTF8(view, offset + 2, textLen);
+          const textLen = sampleView.getUint16(0);
+          if (textLen > 0 && textLen <= size - 2) {
+            title = new TextDecoder("utf-8").decode(new Uint8Array(sampleBuf, 2, textLen));
           } else if (size > 2) {
-            title = readUTF8(view, offset, size).replace(/\0/g, "").trim();
+            title = new TextDecoder("utf-8").decode(new Uint8Array(sampleBuf)).replace(/\0/g, "").trim();
           }
         }
-        if (!title) title = `Chapter ${i + 1}`;
-        chapters.push({ title, startTime: startSec });
-      }
+      } catch (e) {}
+      if (!title) title = `Chapter ${i + 1}`;
+      chapters.push({ title, startTime: startSec });
 
       currentTime += durations[i] || 0;
     }
@@ -257,17 +343,45 @@
     return chapters;
   }
 
-  function findAllAtoms(view, start, end, type) {
-    const results = [];
-    let pos = start;
-    while (pos + 8 <= end) {
-      const size = getAtomSize(view, pos);
-      if (size < 8) break;
-      const t = getAtomType(view, pos + 4);
-      if (t === type) results.push({ offset: pos + 8, size: size - 8 });
-      pos += size;
+  function buildSampleOffsets(view, stbl, chunkOffsets, sampleSizes) {
+    const numSamples = sampleSizes.length;
+    if (chunkOffsets.length >= numSamples) return chunkOffsets.slice(0, numSamples);
+
+    const stsc = findAtom(view, stbl.offset, stbl.offset + stbl.size, "stsc");
+    const stscEntries = [];
+    if (stsc) {
+      const count = view.getUint32(stsc.offset + 4);
+      let p = stsc.offset + 8;
+      for (let i = 0; i < count; i++) {
+        stscEntries.push({
+          firstChunk: view.getUint32(p),
+          samplesPerChunk: view.getUint32(p + 4),
+        });
+        p += 12;
+      }
     }
-    return results;
+    if (stscEntries.length === 0) {
+      stscEntries.push({ firstChunk: 1, samplesPerChunk: numSamples });
+    }
+
+    const offsets = [];
+    let sampleIdx = 0;
+    for (let ci = 0; ci < chunkOffsets.length && sampleIdx < numSamples; ci++) {
+      let spc = stscEntries[0].samplesPerChunk;
+      for (let e = stscEntries.length - 1; e >= 0; e--) {
+        if (ci + 1 >= stscEntries[e].firstChunk) {
+          spc = stscEntries[e].samplesPerChunk;
+          break;
+        }
+      }
+      let pos = chunkOffsets[ci];
+      for (let s = 0; s < spc && sampleIdx < numSamples; s++) {
+        offsets.push(pos);
+        pos += sampleSizes[sampleIdx];
+        sampleIdx++;
+      }
+    }
+    return offsets;
   }
 
   window.ChapterParser = { parseChapters };

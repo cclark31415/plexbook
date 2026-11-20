@@ -26,14 +26,21 @@ const state = {
   plexLibraries: [],
   selectedLibraryKeys: [],
 };
+if (typeof window !== "undefined") {
+  window.__plexbook_state = state;
+}
 
 function $(id) { return document.getElementById(id); }
 
 let _filesystem = null;
 function getFilesystem() {
   if (_filesystem) return _filesystem;
-  if (window.Capacitor && window.Capacitor.registerPlugin) {
-    _filesystem = window.Capacitor.registerPlugin("Filesystem");
+  if (window.Capacitor) {
+    if (window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem) {
+      _filesystem = window.Capacitor.Plugins.Filesystem;
+    } else if (window.Capacitor.registerPlugin) {
+      _filesystem = window.Capacitor.registerPlugin("Filesystem");
+    }
   }
   return _filesystem;
 }
@@ -48,9 +55,13 @@ function safeFilename(s) {
   return (s || "untitled").replace(/[\\/:*?"<>|]/g, "_").replace(/\s+/g, " ").trim().slice(0, 180);
 }
 function extFor(url, container) {
-  if (container) return "." + container.toLowerCase();
-  const m = (url || "").match(/\.([a-z0-9]+)(\?|$)/i);
-  return m ? "." + m[1].toLowerCase() : ".m4b";
+  let ext = container ? container.toLowerCase() : "";
+  if (!ext) {
+    const m = (url || "").match(/\.([a-z0-9]+)(\?|$)/i);
+    ext = m ? m[1].toLowerCase() : "m4b";
+  }
+  if (ext === "m4b") ext = "m4a";
+  return "." + ext;
 }
 
 function sortKey(title) {
@@ -107,6 +118,7 @@ function saveLibrary() {
     author: b.author,
     source: b.source,
     trackNames: b.tracks ? b.tracks.map((t) => t.name) : [],
+    tracks: b.tracks ? b.tracks.map((t) => ({ name: t.name, chapters: t.chapters || [] })) : [],
   }));
   localStorage.setItem("plexbook_local_library", JSON.stringify(serializable));
 }
@@ -118,7 +130,9 @@ function loadLocalLibrary() {
     return saved.map((b) => ({
       ...b,
       thumb: "",
-      tracks: (b.trackNames || []).map((name) => ({ name, url: null })),
+      tracks: (b.tracks && b.tracks.length > 0)
+        ? b.tracks.map((t) => ({ name: t.name, chapters: t.chapters || [], url: null, file: null }))
+        : (b.trackNames || []).map((name) => ({ name, chapters: [], url: null, file: null })),
     }));
   } catch { return []; }
 }
@@ -174,12 +188,17 @@ function renderLibrary() {
       ? `<img src="${book.thumb}" alt="" loading="lazy" />`
       : `<span class="placeholder-art">&#127911;</span>`;
 
+    const isDownloaded = !!(state.downloads[book.id] && state.downloads[book.id].uris && state.downloads[book.id].uris.length);
+    const sourceBadgeHtml = isDownloaded
+      ? `<span class="book-card-source downloaded">&#10003; Downloaded</span>`
+      : `<span class="book-card-source">${book.source}</span>`;
+
     return `<div class="book-card" data-book-id="${book.id}">
       <div class="book-card-art">${artHtml}</div>
       <div class="book-card-info">
         <p class="book-card-title" title="${book.title}">${book.title}</p>
         <p class="book-card-author">${book.author || "Unknown"}</p>
-        <span class="book-card-source">${book.source}</span>
+        ${sourceBadgeHtml}
         ${progress > 0 ? `<div class="book-card-progress"><div class="book-card-progress-fill" style="width:${progress}%"></div></div>` : ""}
       </div>
     </div>`;
@@ -371,7 +390,7 @@ function updatePlexUI() {
 }
 
 // Local file handling
-function handleLocalFiles(files, isFolderMode) {
+async function handleLocalFiles(files, isFolderMode) {
   const audioFiles = Array.from(files).filter((f) => f.type.startsWith("audio/") || /\.(mp3|m4a|m4b|ogg|flac|wav|aac|opus|wma)$/i.test(f.name));
 
   if (audioFiles.length === 0) {
@@ -386,10 +405,24 @@ function handleLocalFiles(files, isFolderMode) {
     audioFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 
     const bookId = "local-" + folderName.toLowerCase().replace(/\s+/g, "-") + "-" + Date.now();
-    const tracks = audioFiles.map((f) => ({
-      name: f.name.replace(/\.[^.]+$/, ""),
-      file: f,
-      url: URL.createObjectURL(f),
+    const tracks = await Promise.all(audioFiles.map(async (f) => {
+      let chapters = [];
+      if (/\.(m4b|m4a|mp4)$/i.test(f.name)) {
+        try {
+          const parsed = await ChapterParser.parseChapters(f);
+          if (parsed && parsed.length > 0) {
+            chapters = parsed.map((c) => ({ name: c.title, startOffset: c.startTime }));
+          }
+        } catch (e) {
+          console.warn("Local chapter pre-parse failed:", e);
+        }
+      }
+      return {
+        name: f.name.replace(/\.[^.]+$/, ""),
+        file: f,
+        url: URL.createObjectURL(f),
+        chapters,
+      };
     }));
 
     state.library.push({
@@ -404,13 +437,24 @@ function handleLocalFiles(files, isFolderMode) {
     audioFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     for (const f of audioFiles) {
       const bookId = "local-" + f.name.toLowerCase().replace(/\s+/g, "-") + "-" + Date.now();
+      let chapters = [];
+      if (/\.(m4b|m4a|mp4)$/i.test(f.name)) {
+        try {
+          const parsed = await ChapterParser.parseChapters(f);
+          if (parsed && parsed.length > 0) {
+            chapters = parsed.map((c) => ({ name: c.title, startOffset: c.startTime }));
+          }
+        } catch (e) {
+          console.warn("Local chapter pre-parse failed:", e);
+        }
+      }
       state.library.push({
         id: bookId,
         title: f.name.replace(/\.[^.]+$/, ""),
         author: "",
         source: "local",
         thumb: "",
-        tracks: [{ name: f.name.replace(/\.[^.]+$/, ""), file: f, url: URL.createObjectURL(f) }],
+        tracks: [{ name: f.name.replace(/\.[^.]+$/, ""), file: f, url: URL.createObjectURL(f), chapters }],
       });
     }
   }
@@ -433,12 +477,17 @@ async function openBook(bookId) {
       const tracks = await PlexAPI.getAlbumTracks(state.plexServerUrl, book.ratingKey, state.plexToken);
       state.tracks = tracks.map((t) => {
         const part = (t.Media && t.Media[0] && t.Media[0].Part && t.Media[0].Part[0]) || {};
+        const plexChapters = (t.Chapter || []).map((c) => ({
+          name: c.tag || c.name || `Chapter ${c.index || ""}`,
+          startOffset: (c.startTimeOffset || 0) / 1000,
+          endOffset: c.endTimeOffset ? c.endTimeOffset / 1000 : undefined,
+        }));
         return {
           name: t.title,
           duration: t.duration / 1000,
           url: PlexAPI.getStreamUrl(state.plexServerUrl, part.key, state.plexToken),
           container: part.container || null,
-          chapters: [],
+          chapters: plexChapters,
         };
       });
     } catch (e) {
@@ -462,12 +511,25 @@ async function openBook(bookId) {
     }
   }
 
-  if (book.source === "local" && state.tracks[0] && state.tracks[0].file
-      && (!state.tracks[0].chapters || state.tracks[0].chapters.length === 0)) {
-    try {
-      const parsed = await ChapterParser.parseChapters(state.tracks[0].file);
-      state.tracks[0].chapters = parsed.map((c) => ({ name: c.title, startOffset: c.startTime }));
-    } catch (e) { console.warn("Local chapter parse failed:", e); }
+  // Parse chapters from file or stream URL if not already present
+  if (state.tracks[0] && (!state.tracks[0].chapters || state.tracks[0].chapters.length === 0)) {
+    const chapterSource = state.tracks[0].file || state.tracks[0].url;
+    if (chapterSource) {
+      try {
+        const parsed = await ChapterParser.parseChapters(chapterSource);
+        if (parsed && parsed.length > 0) {
+          state.tracks[0].chapters = parsed.map((c) => ({ name: c.title, startOffset: c.startTime }));
+          if (book.tracks && book.tracks[0]) {
+            book.tracks[0].chapters = state.tracks[0].chapters;
+          }
+          if (book.source === "local") {
+            saveLibrary();
+          }
+        }
+      } catch (e) {
+        console.warn("Chapter parse failed:", e);
+      }
+    }
   }
 
   $("libraryView").hidden = true;
@@ -478,12 +540,35 @@ async function openBook(bookId) {
   $("bookTitle").textContent = book.title;
   $("bookAuthor").textContent = book.author || "";
 
+  const badge = $("playerSourceBadge");
+  if (badge) {
+    const isDownloaded = !!(state.downloads[book.id] && state.downloads[book.id].uris && state.downloads[book.id].uris.length);
+    badge.hidden = false;
+    if (isDownloaded) {
+      badge.className = "player-source-badge downloaded";
+      badge.innerHTML = "&#10003; Downloaded &bull; Playing Locally";
+    } else if (book.source === "plex") {
+      badge.className = "player-source-badge streaming";
+      badge.textContent = "Streaming from Plex";
+    } else {
+      badge.className = "player-source-badge local";
+      badge.textContent = "Local file";
+    }
+  }
+
   const art = $("albumArt");
-  if (book.thumb) {
-    art.src = book.thumb;
-    art.style.display = "";
+  const canvas = $("spectrumCanvas");
+  if (state.spectrumEnabled) {
+    art.style.display = "none";
+    canvas.hidden = false;
   } else {
-    art.src = "";
+    canvas.hidden = true;
+    if (book.thumb) {
+      art.src = book.thumb;
+      art.style.display = "";
+    } else {
+      art.src = "";
+    }
   }
 
   buildChapters();
@@ -521,6 +606,16 @@ async function downloadCurrentBook() {
   if (btn) btn.disabled = true;
 
   const folder = "audiobooks/" + safeFilename(book.title);
+  try {
+    await Filesystem.mkdir({
+      path: folder,
+      directory: "DATA",
+      recursive: true,
+    });
+  } catch (err) {
+    console.log("Folder already exists or mkdir info:", err);
+  }
+
   const uris = [];
   let progressListener;
   try {
@@ -557,15 +652,20 @@ async function downloadCurrentBook() {
   }
   if (progressListener) progressListener.remove();
 
-  let parsedChapters = [];
-  try {
-    if (btn) btn.textContent = "Parsing chapters…";
-    const resp = await fetch(toPlayableSrc(uris[0]));
-    const blob = await resp.blob();
-    const parsed = await ChapterParser.parseChapters(blob);
-    parsedChapters = parsed.map((c) => ({ name: c.title, startOffset: c.startTime }));
-  } catch (e) {
-    console.warn("Chapter parse failed:", e);
+  let parsedChapters = (state.tracks[0] && state.tracks[0].chapters && state.tracks[0].chapters.length > 0)
+    ? state.tracks[0].chapters
+    : [];
+
+  if (parsedChapters.length === 0) {
+    try {
+      if (btn) btn.textContent = "Parsing chapters…";
+      const resp = await fetch(toPlayableSrc(uris[0]));
+      const blob = await resp.blob();
+      const parsed = await ChapterParser.parseChapters(blob);
+      parsedChapters = parsed.map((c) => ({ name: c.title, startOffset: c.startTime }));
+    } catch (e) {
+      console.warn("Chapter parse failed:", e);
+    }
   }
 
   state.downloads[book.id] = { uris, chapters: parsedChapters };
@@ -576,7 +676,22 @@ async function downloadCurrentBook() {
   buildChapters();
   populateChapters();
 
+  const curTime = state.audio ? state.audio.currentTime : 0;
+  const wasPlaying = state.playing;
+  loadTrack(state.currentTrackIndex, curTime);
+  if (wasPlaying) {
+    state.playing = true;
+    if (state.audio) state.audio.play().catch(() => {});
+    updatePlayButton();
+  }
+
   if (btn) { btn.hidden = true; btn.disabled = false; btn.textContent = "⬇ Download"; }
+  const badge = $("playerSourceBadge");
+  if (badge) {
+    badge.hidden = false;
+    badge.className = "player-source-badge downloaded";
+    badge.innerHTML = "&#10003; Downloaded &bull; Playing Locally";
+  }
   toast(`Downloaded "${book.title}"` + (parsedChapters.length > 0 ? ` (${parsedChapters.length} chapters)` : ""));
 }
 
@@ -633,6 +748,40 @@ function updateChapterSelection() {
   }
 }
 
+const PLAY_ICON_SVG = '<svg class="play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+const PAUSE_ICON_SVG = '<svg class="pause-icon" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
+
+function updatePlayButton() {
+  $("playPauseBtn").innerHTML = state.playing ? PAUSE_ICON_SVG : PLAY_ICON_SVG;
+}
+
+function onAudioError() {
+  const err = (state.audio && state.audio.error) || null;
+  let msg = "Audio playback failed";
+  if (err) {
+    switch (err.code) {
+      case MediaError.MEDIA_ERR_ABORTED:
+        msg = "Playback aborted";
+        break;
+      case MediaError.MEDIA_ERR_NETWORK:
+        msg = "Network error loading audio stream";
+        break;
+      case MediaError.MEDIA_ERR_DECODE:
+        msg = "Audio decoding error";
+        break;
+      case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+        msg = "Audio format not supported or URL unreachable";
+        break;
+      default:
+        msg = "Audio error (" + err.code + "): " + (err.message || "unknown");
+    }
+  }
+  console.error("Audio error:", msg, err, state.audio ? state.audio.src : "");
+  toast(msg);
+  state.playing = false;
+  updatePlayButton();
+}
+
 function loadTrack(index, startTime = 0) {
   if (index < 0 || index >= state.tracks.length) return;
 
@@ -645,20 +794,56 @@ function loadTrack(index, startTime = 0) {
     state.audio.removeEventListener("timeupdate", onTimeUpdate);
     state.audio.removeEventListener("ended", onTrackEnded);
     state.audio.removeEventListener("loadedmetadata", onMetadataLoaded);
+    state.audio.removeEventListener("error", onAudioError);
   }
 
-  state.audio = new Audio(state.tracks[index].url);
+  const trackUrl = state.tracks[index].url;
+  console.log("Loading track:", index, trackUrl);
+  state.audio = new Audio();
+  state.audio.crossOrigin = "anonymous";
+  state.audio.src = trackUrl;
   state.audio.playbackRate = state.speed;
+
+  let seekApplied = false;
+  const applySeek = () => {
+    if (!seekApplied && startTime > 0 && state.audio) {
+      try {
+        if (state.audio.duration && !isNaN(state.audio.duration)) {
+          state.audio.currentTime = Math.min(startTime, state.audio.duration);
+          seekApplied = true;
+        } else if (state.audio.seekable && state.audio.seekable.length > 0) {
+          state.audio.currentTime = startTime;
+          seekApplied = true;
+        }
+      } catch (e) {
+        console.warn("Seek to startTime failed:", e);
+      }
+    }
+  };
+
   state.audio.addEventListener("timeupdate", onTimeUpdate);
   state.audio.addEventListener("ended", onTrackEnded);
-  state.audio.addEventListener("loadedmetadata", onMetadataLoaded);
+  state.audio.addEventListener("loadedmetadata", () => {
+    onMetadataLoaded();
+    applySeek();
+  });
+  state.audio.addEventListener("canplay", applySeek);
+  state.audio.addEventListener("error", onAudioError);
 
-  if (state.spectrumEnabled) setupSpectrum();
-
-  state.audio.currentTime = startTime;
+  if (state.spectrumEnabled) {
+    try { setupSpectrum(); } catch (e) { console.warn("Spectrum setup failed:", e); }
+  }
 
   if (state.playing) {
-    state.audio.play().catch(() => {});
+    const p = state.audio.play();
+    if (p !== undefined) {
+      p.catch((err) => {
+        console.error("Playback failed:", err);
+        state.playing = false;
+        updatePlayButton();
+        toast("Playback failed: " + (err.message || "Check network/server"));
+      });
+    }
   }
 
   startPositionSaving();
@@ -700,15 +885,29 @@ function togglePlay() {
   if (state.playing) {
     state.audio.pause();
     state.playing = false;
+    updatePlayButton();
   } else {
-    state.audio.play().catch(() => {});
-    state.playing = true;
+    if (state.audioCtx && state.audioCtx.state === "suspended") {
+      state.audioCtx.resume().catch(() => {});
+    }
+    const playPromise = state.audio.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          state.playing = true;
+          updatePlayButton();
+        })
+        .catch((err) => {
+          console.error("Play failed:", err);
+          state.playing = false;
+          updatePlayButton();
+          toast("Playback failed: " + (err.message || "Cannot play audio"));
+        });
+    } else {
+      state.playing = true;
+      updatePlayButton();
+    }
   }
-  updatePlayButton();
-}
-
-function updatePlayButton() {
-  $("playPauseBtn").innerHTML = state.playing ? "&#9646;&#9646;" : "&#9654;";
 }
 
 function seekRelative(seconds) {
@@ -754,19 +953,26 @@ function backToLibrary() {
 
 // Audio spectrum analyzer
 function setupSpectrum() {
-  if (!state.audio) return;
-  if (!state.audioCtx) {
-    state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!state.audio || !state.spectrumEnabled) return;
+  try {
+    if (!state.audioCtx) {
+      state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (state.audioCtx.state === "suspended") {
+      state.audioCtx.resume().catch(() => {});
+    }
+    if (state.sourceNode) {
+      try { state.sourceNode.disconnect(); } catch {}
+    }
+    state.sourceNode = state.audioCtx.createMediaElementSource(state.audio);
+    state.analyser = state.audioCtx.createAnalyser();
+    state.analyser.fftSize = 256;
+    state.sourceNode.connect(state.analyser);
+    state.analyser.connect(state.audioCtx.destination);
+    drawSpectrum();
+  } catch (err) {
+    console.warn("Could not setup audio spectrum:", err);
   }
-  if (state.sourceNode) {
-    try { state.sourceNode.disconnect(); } catch {}
-  }
-  state.sourceNode = state.audioCtx.createMediaElementSource(state.audio);
-  state.analyser = state.audioCtx.createAnalyser();
-  state.analyser.fftSize = 256;
-  state.sourceNode.connect(state.analyser);
-  state.analyser.connect(state.audioCtx.destination);
-  drawSpectrum();
 }
 
 function drawSpectrum() {
@@ -819,10 +1025,15 @@ function toggleSpectrum(enabled) {
     else drawSpectrum();
   } else {
     canvas.hidden = true;
-    if (state.currentBook && state.currentBook.thumb) art.style.display = "";
+    if (state.currentBook && state.currentBook.thumb) {
+      art.src = state.currentBook.thumb;
+      art.style.display = "";
+    }
     stopSpectrum();
   }
   localStorage.setItem("plexbook_spectrum", enabled ? "1" : "0");
+  const prefBox = $("prefSpectrum");
+  if (prefBox) prefBox.checked = enabled;
 }
 
 // Theme
@@ -885,6 +1096,18 @@ function init() {
   $("sourceFilter").addEventListener("change", renderLibrary);
 
   // Player controls
+  const artWrap = $("playerArtWrap");
+  if (artWrap) {
+    artWrap.addEventListener("click", () => {
+      toggleSpectrum(!state.spectrumEnabled);
+    });
+    artWrap.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggleSpectrum(!state.spectrumEnabled);
+      }
+    });
+  }
   $("backToLibrary").addEventListener("click", backToLibrary);
   $("playPauseBtn").addEventListener("click", togglePlay);
   $("rewindBtn").addEventListener("click", () => seekRelative(-30));
