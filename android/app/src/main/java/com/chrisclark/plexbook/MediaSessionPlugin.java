@@ -11,6 +11,7 @@ import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.Player;
 import androidx.media3.session.MediaController;
 import androidx.media3.session.SessionToken;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -36,6 +37,14 @@ public class MediaSessionPlugin extends Plugin {
         return null;
     }
 
+    private String resolveMediaUri(String url) {
+        if (url == null) return null;
+        if (url.contains("/_capacitor_file_")) {
+            return url.replaceAll("https?://[^/]+/_capacitor_file_", "file://");
+        }
+        return url;
+    }
+
     @Override
     public void load() {
         super.load();
@@ -50,6 +59,16 @@ public class MediaSessionPlugin extends Plugin {
                 e.printStackTrace();
             }
         }, MoreExecutors.directExecutor());
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        if (controllerFuture != null) {
+            MediaController.releaseFuture(controllerFuture);
+            controllerFuture = null;
+            mediaController = null;
+        }
+        super.handleOnDestroy();
     }
 
     private void setupControllerListener() {
@@ -90,6 +109,22 @@ public class MediaSessionPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getFrequencyData(PluginCall call) {
+        JSObject ret = new JSObject();
+        JSArray arr = new JSArray();
+        float[] freqs = PlaybackService.getFftFrequencies();
+        if (freqs != null) {
+            for (float f : freqs) {
+                try {
+                    arr.put((double) f);
+                } catch (Exception e) {}
+            }
+        }
+        ret.put("frequencies", arr);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
     public void setStatusBarStyle(PluginCall call) {
         Boolean isDark = call.getBoolean("isDark", false);
         getBridge().executeOnMainThread(() -> {
@@ -127,12 +162,7 @@ public class MediaSessionPlugin extends Plugin {
             return;
         }
 
-        String mediaUrl = url;
-        if (mediaUrl.contains("/_capacitor_file_")) {
-            mediaUrl = mediaUrl.replaceAll("https?://[^/]+/_capacitor_file_", "file://");
-        }
-
-        final String finalMediaUrl = mediaUrl;
+        final String finalMediaUrl = resolveMediaUri(url);
         final long startPositionMs = position != null ? position : 0L;
         lastRequestedPositionMs = startPositionMs;
 
@@ -151,17 +181,21 @@ public class MediaSessionPlugin extends Plugin {
                     }
                 }
 
-                MediaItem mediaItem = new MediaItem.Builder()
-                    .setUri(finalMediaUrl)
-                    .setMediaMetadata(metaBuilder.build())
-                    .build();
+                try {
+                    MediaItem mediaItem = new MediaItem.Builder()
+                        .setUri(Uri.parse(finalMediaUrl))
+                        .setMediaMetadata(metaBuilder.build())
+                        .build();
 
-                mediaController.setMediaItem(mediaItem, startPositionMs);
-                if (startPositionMs > 0) {
-                    mediaController.seekTo(startPositionMs);
+                    mediaController.setMediaItem(mediaItem, startPositionMs);
+                    if (startPositionMs > 0) {
+                        mediaController.seekTo(startPositionMs);
+                    }
+                    mediaController.prepare();
+                    call.resolve();
+                } catch (Exception e) {
+                    call.reject("Failed to parse or load media URI: " + e.getMessage());
                 }
-                mediaController.prepare();
-                call.resolve();
             } else {
                 call.reject("Media controller not ready");
             }

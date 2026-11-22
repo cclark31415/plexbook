@@ -621,16 +621,21 @@ async function openBook(bookId) {
   const art = $("albumArt");
   const canvas = $("spectrumCanvas");
   if (state.spectrumEnabled) {
-    art.style.display = "none";
-    canvas.hidden = false;
+    if (art) art.style.display = "none";
+    if (canvas) canvas.hidden = false;
+    setupSpectrum();
   } else {
-    canvas.hidden = true;
-    if (book.thumb) {
-      art.src = book.thumb;
-      art.style.display = "";
-    } else {
-      art.src = "";
+    if (canvas) canvas.hidden = true;
+    if (art) {
+      if (book.thumb) {
+        art.src = book.thumb;
+        art.style.display = "";
+      } else {
+        art.src = "";
+        art.style.display = "none";
+      }
     }
+    stopSpectrum();
   }
 
   buildChapters();
@@ -1080,57 +1085,132 @@ function backToLibrary() {
 
 // Audio spectrum analyzer
 function setupSpectrum() {
-  if (!state.audio || !state.spectrumEnabled) return;
+  if (!state.spectrumEnabled) return;
   try {
-    if (!state.audioCtx) {
-      state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (state.audio) {
+      if (!state.audioCtx) {
+        state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (state.audioCtx.state === "suspended") {
+        state.audioCtx.resume().catch(() => {});
+      }
+      if (state.sourceNode) {
+        try { state.sourceNode.disconnect(); } catch {}
+      }
+      state.sourceNode = state.audioCtx.createMediaElementSource(state.audio);
+      state.analyser = state.audioCtx.createAnalyser();
+      state.analyser.fftSize = 256;
+      state.sourceNode.connect(state.analyser);
+      state.analyser.connect(state.audioCtx.destination);
     }
-    if (state.audioCtx.state === "suspended") {
-      state.audioCtx.resume().catch(() => {});
-    }
-    if (state.sourceNode) {
-      try { state.sourceNode.disconnect(); } catch {}
-    }
-    state.sourceNode = state.audioCtx.createMediaElementSource(state.audio);
-    state.analyser = state.audioCtx.createAnalyser();
-    state.analyser.fftSize = 256;
-    state.sourceNode.connect(state.analyser);
-    state.analyser.connect(state.audioCtx.destination);
-    drawSpectrum();
   } catch (err) {
     console.warn("Could not setup audio spectrum:", err);
   }
+  drawSpectrum();
 }
 
 function drawSpectrum() {
-  if (!state.analyser || !state.spectrumEnabled) return;
+  if (!state.spectrumEnabled) return;
   const canvas = $("spectrumCanvas");
+  if (!canvas) return;
   const ctx = canvas.getContext("2d");
-  const bufferLength = state.analyser.frequencyBinCount;
-  const dataArray = new Uint8Array(bufferLength);
 
   function draw() {
     if (!state.spectrumEnabled) return;
     state.animFrameId = requestAnimationFrame(draw);
-    state.analyser.getByteFrequencyData(dataArray);
 
-    canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
-    canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+    const dpr = window.devicePixelRatio || 1;
+    const clientW = canvas.clientWidth || canvas.offsetWidth || 320;
+    const clientH = canvas.clientHeight || canvas.offsetHeight || 320;
+
+    canvas.width = clientW * dpr;
+    canvas.height = clientH * dpr;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#e5a00d";
+
+    if (isNative()) {
+      if (state.playing && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaSession) {
+        window.Capacitor.Plugins.MediaSession.getFrequencyData().then((res) => {
+          if (res && res.frequencies && res.frequencies.length > 0) {
+            state.nativeFrequencies = res.frequencies;
+          }
+        }).catch(() => {});
+      }
+
+      const bufferLength = 32;
+      const barWidth = canvas.width / bufferLength;
+      let x = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        let barHeight = 0;
+        if (state.playing) {
+          const pcmAmp = (state.nativeFrequencies && state.nativeFrequencies[i] !== undefined)
+            ? state.nativeFrequencies[i]
+            : 0;
+          barHeight = Math.max(6 * dpr, pcmAmp * canvas.height * 0.9);
+        } else {
+          barHeight = 4 * dpr;
+        }
+        ctx.fillStyle = accent;
+        ctx.globalAlpha = state.playing ? 0.55 + (barHeight / canvas.height) * 0.45 : 0.25;
+        ctx.fillRect(x, canvas.height - barHeight, Math.max(1, barWidth - 2 * dpr), barHeight);
+        x += barWidth;
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    if (state.analyser) {
+      const bufferLength = state.analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      state.analyser.getByteFrequencyData(dataArray);
+
+      const barWidth = canvas.width / bufferLength;
+      let x = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const barHeight = (dataArray[i] / 255) * canvas.height;
+        ctx.fillStyle = accent;
+        ctx.globalAlpha = 0.6 + (dataArray[i] / 255) * 0.4;
+        ctx.fillRect(x, canvas.height - barHeight, Math.max(1, barWidth - 1), barHeight);
+        x += barWidth;
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    // Stationary Multi-Band Frequency Spectrum Visualizer (Stationary vertical pulsing, ZERO horizontal scrolling)
+    const bufferLength = 32;
     const barWidth = canvas.width / bufferLength;
     let x = 0;
-    const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+    const now = Date.now() / 1000;
 
     for (let i = 0; i < bufferLength; i++) {
-      const barHeight = (dataArray[i] / 255) * canvas.height;
+      let barHeight = 0;
+      if (state.playing) {
+        const freqRatio = i / bufferLength;
+        const envelope = Math.sin(Math.PI * (freqRatio * 0.85 + 0.1));
+
+        // Independent stationary oscillation rates per bar (no spatial phase gradient)
+        const rate1 = 2.5 + ((i * 7) % 11) * 0.7;
+        const rate2 = 4.2 + ((i * 13) % 7) * 1.1;
+        const staticPhase = (i * 2.39) % 3.14159;
+
+        const pulse = Math.abs(Math.sin(now * rate1 + staticPhase) * 0.6 + Math.cos(now * rate2 + staticPhase * 0.5) * 0.4);
+        const val = Math.max(0.08, pulse * envelope * 0.95);
+        barHeight = val * canvas.height;
+      } else {
+        barHeight = 4 * dpr;
+      }
       ctx.fillStyle = accent;
-      ctx.globalAlpha = 0.6 + (dataArray[i] / 255) * 0.4;
-      ctx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
+      ctx.globalAlpha = state.playing ? 0.55 + (barHeight / canvas.height) * 0.45 : 0.25;
+      ctx.fillRect(x, canvas.height - barHeight, Math.max(1, barWidth - 2 * dpr), barHeight);
       x += barWidth;
     }
     ctx.globalAlpha = 1;
   }
+
+  stopSpectrum();
   draw();
 }
 
@@ -1146,15 +1226,19 @@ function toggleSpectrum(enabled) {
   const art = $("albumArt");
   const canvas = $("spectrumCanvas");
   if (enabled) {
-    art.style.display = "none";
-    canvas.hidden = false;
-    if (state.audio && !state.analyser) setupSpectrum();
-    else drawSpectrum();
+    if (art) art.style.display = "none";
+    if (canvas) canvas.hidden = false;
+    setupSpectrum();
   } else {
-    canvas.hidden = true;
-    if (state.currentBook && state.currentBook.thumb) {
-      art.src = state.currentBook.thumb;
-      art.style.display = "";
+    if (canvas) canvas.hidden = true;
+    if (art) {
+      if (state.currentBook && state.currentBook.thumb) {
+        art.src = state.currentBook.thumb;
+        art.style.display = "";
+      } else {
+        art.src = "";
+        art.style.display = "none";
+      }
     }
     stopSpectrum();
   }
@@ -1213,6 +1297,9 @@ function init() {
       ms.addListener("onPositionChanged", (data) => {
         if (data && data.position !== undefined) {
           const sec = data.position / 1000;
+          if (sec === 0 && state.nativePosition > 0 && !state.playing) {
+            return;
+          }
           state.nativePosition = sec;
           $("currentTime").textContent = formatTime(sec);
           $("seekBar").value = sec;

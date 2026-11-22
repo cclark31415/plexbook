@@ -1,14 +1,24 @@
 package com.chrisclark.plexbook;
 
 import android.app.PendingIntent;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
 import androidx.annotation.Nullable;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
 import androidx.media3.common.Player;
+import androidx.media3.common.audio.AudioProcessor;
+import androidx.media3.common.audio.BaseAudioProcessor;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.Renderer;
+import androidx.media3.exoplayer.audio.AudioRendererEventListener;
+import androidx.media3.exoplayer.audio.AudioSink;
+import androidx.media3.exoplayer.audio.DefaultAudioSink;
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector;
 import androidx.media3.session.CommandButton;
 import androidx.media3.session.MediaSession;
 import androidx.media3.session.MediaSessionService;
@@ -18,18 +28,99 @@ import androidx.media3.session.SessionResult;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.ArrayList;
 
+@UnstableApi
 public class PlaybackService extends MediaSessionService {
     public static final String ACTION_REWIND_30 = "ACTION_REWIND_30";
     public static final String ACTION_FORWARD_30 = "ACTION_FORWARD_30";
 
     private MediaSession mediaSession = null;
     private ExoPlayer player = null;
+    private static final CustomAudioProcessor audioProcessor = new CustomAudioProcessor();
+
+    public static float[] getFftFrequencies() {
+        return CustomAudioProcessor.getFrequencies();
+    }
+
+    public static class CustomAudioProcessor extends BaseAudioProcessor {
+        public static final float[] pcmFrequencies = new float[32];
+
+        public static float[] getFrequencies() {
+            return pcmFrequencies;
+        }
+
+        @Override
+        public AudioFormat onConfigure(AudioFormat inputAudioFormat) throws UnhandledAudioFormatException {
+            return inputAudioFormat;
+        }
+
+        @Override
+        public void queueInput(ByteBuffer inputBuffer) {
+            int remaining = inputBuffer.remaining();
+            if (remaining <= 0) return;
+
+            int samples = remaining / 2;
+            if (samples >= 32) {
+                int step = samples / 32;
+                ByteOrder originalOrder = inputBuffer.order();
+                inputBuffer.order(ByteOrder.LITTLE_ENDIAN);
+                int originalPosition = inputBuffer.position();
+
+                for (int i = 0; i < 32; i++) {
+                    int pos = originalPosition + (i * step * 2);
+                    if (pos + 1 < originalPosition + remaining) {
+                        short sample = inputBuffer.getShort(pos);
+                        float amp = Math.abs(sample) / 32768.0f;
+                        float scaledAmp = Math.min(1.0f, (float) Math.pow(amp * 2.5f, 0.65));
+                        pcmFrequencies[i] = pcmFrequencies[i] * 0.25f + scaledAmp * 0.75f;
+                    }
+                }
+                inputBuffer.order(originalOrder);
+                inputBuffer.position(originalPosition);
+            }
+
+            ByteBuffer buffer = replaceOutputBuffer(remaining);
+            buffer.put(inputBuffer);
+            buffer.flip();
+        }
+    }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        player = new ExoPlayer.Builder(this)
+
+        DefaultAudioSink customAudioSink = new DefaultAudioSink.Builder(this)
+            .setAudioProcessors(new AudioProcessor[]{ audioProcessor })
+            .build();
+
+        DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(this) {
+            @Override
+            protected void buildAudioRenderers(
+                Context context,
+                int extensionRendererMode,
+                MediaCodecSelector mediaCodecSelector,
+                boolean enableDecoderFallback,
+                AudioSink audioSink,
+                Handler eventHandler,
+                AudioRendererEventListener eventListener,
+                ArrayList<Renderer> out) {
+                super.buildAudioRenderers(
+                    context,
+                    extensionRendererMode,
+                    mediaCodecSelector,
+                    enableDecoderFallback,
+                    customAudioSink,
+                    eventHandler,
+                    eventListener,
+                    out
+                );
+            }
+        };
+
+        player = new ExoPlayer.Builder(this, renderersFactory)
             .setAudioAttributes(AudioAttributes.DEFAULT, true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -107,7 +198,6 @@ public class PlaybackService extends MediaSessionService {
             .build();
     }
 
-    @UnstableApi
     @Override
     public void onTaskRemoved(@Nullable Intent rootIntent) {
         // Keep foreground service persistent
