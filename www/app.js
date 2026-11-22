@@ -163,6 +163,55 @@ function loadPlexAuth() {
   } catch { state.selectedLibraryKeys = []; }
 }
 
+function updateNativeMediaSession(action, data) {
+  if (isNative() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaSession) {
+    try {
+      const ms = window.Capacitor.Plugins.MediaSession;
+      if (action === "load" && data) {
+        ms.loadMedia({
+          url: data.url,
+          title: data.title || "PlexBook",
+          artist: data.artist || "",
+          artworkUrl: data.artworkUrl || "",
+          position: Math.round((data.position || 0) * 1000)
+        });
+      } else if (action === "play") {
+        ms.play();
+      } else if (action === "pause") {
+        ms.pause();
+      } else if (action === "seek" && data) {
+        ms.seek({ position: Math.round(data.position) });
+      } else if (action === "seekBack") {
+        ms.seekBack();
+      } else if (action === "seekForward") {
+        ms.seekForward();
+      }
+    } catch (e) {
+      console.warn("MediaSession plugin call failed:", e);
+    }
+  }
+}
+
+function restoreLastPlayedBook() {
+  const lastBookId = localStorage.getItem("plexbook_last_played_book_id");
+  if (!lastBookId || state.currentBook) return;
+
+  let book = state.library.find((b) => b.id === lastBookId);
+  if (!book) {
+    try {
+      const savedData = JSON.parse(localStorage.getItem("plexbook_last_played_book_data"));
+      if (savedData && savedData.id === lastBookId) {
+        book = savedData;
+        state.library.push(book);
+      }
+    } catch (e) {}
+  }
+
+  if (book) {
+    openBook(lastBookId);
+  }
+}
+
 // Library rendering
 function renderLibrary() {
   const grid = $("libraryGrid");
@@ -472,6 +521,19 @@ async function openBook(bookId) {
 
   state.currentBook = book;
 
+  localStorage.setItem("plexbook_last_played_book_id", bookId);
+  try {
+    localStorage.setItem("plexbook_last_played_book_data", JSON.stringify({
+      id: book.id,
+      title: book.title,
+      author: book.author,
+      source: book.source,
+      thumb: book.thumb,
+      ratingKey: book.ratingKey,
+      tracks: book.tracks ? book.tracks.map((t) => ({ name: t.name, duration: t.duration, url: t.url, container: t.container, chapters: t.chapters || [] })) : []
+    }));
+  } catch (e) {}
+
   if (book.source === "plex") {
     try {
       const tracks = await PlexAPI.getAlbumTracks(state.plexServerUrl, book.ratingKey, state.plexToken);
@@ -739,9 +801,23 @@ function chapterIndexFor(trackIndex, time) {
   return last;
 }
 
+function getCurrentTime() {
+  if (isNative()) {
+    return state.nativePosition || 0;
+  }
+  return state.audio ? state.audio.currentTime || 0 : 0;
+}
+
+function getDuration() {
+  if (isNative()) {
+    return state.nativeDuration || 0;
+  }
+  return state.audio ? state.audio.duration || 0 : 0;
+}
+
 function updateChapterSelection() {
-  if (!state.audio) return;
-  const idx = chapterIndexFor(state.currentTrackIndex, state.audio.currentTime || 0);
+  const curTime = getCurrentTime();
+  const idx = chapterIndexFor(state.currentTrackIndex, curTime);
   if (idx !== state.currentChapterIndex) {
     state.currentChapterIndex = idx;
     $("chapterSelect").value = idx;
@@ -789,6 +865,34 @@ function loadTrack(index, startTime = 0) {
   state.currentChapterIndex = chapterIndexFor(index, startTime);
   $("chapterSelect").value = state.currentChapterIndex;
 
+  const trackUrl = state.tracks[index].url;
+  console.log("Loading track:", index, trackUrl);
+
+  if (isNative()) {
+    if (state.audio) {
+      try { state.audio.pause(); } catch (e) {}
+      state.audio = null;
+    }
+    state.nativePosition = startTime;
+    $("currentTime").textContent = formatTime(startTime);
+    $("seekBar").value = startTime;
+
+    updateNativeMediaSession("load", {
+      url: trackUrl,
+      title: state.currentBook ? state.currentBook.title : "PlexBook",
+      artist: state.currentBook ? state.currentBook.author : "",
+      artworkUrl: state.currentBook ? state.currentBook.thumb : "",
+      position: startTime || 0
+    });
+
+    if (state.playing) {
+      updateNativeMediaSession("play");
+    }
+    startPositionSaving();
+    return;
+  }
+
+  // Web Browser fallback
   if (state.audio) {
     state.audio.pause();
     state.audio.removeEventListener("timeupdate", onTimeUpdate);
@@ -797,8 +901,6 @@ function loadTrack(index, startTime = 0) {
     state.audio.removeEventListener("error", onAudioError);
   }
 
-  const trackUrl = state.tracks[index].url;
-  console.log("Loading track:", index, trackUrl);
   state.audio = new Audio();
   state.audio.crossOrigin = "anonymous";
   state.audio.src = trackUrl;
@@ -881,6 +983,15 @@ function onTrackEnded() {
 }
 
 function togglePlay() {
+  if (isNative()) {
+    if (state.playing) {
+      updateNativeMediaSession("pause");
+    } else {
+      updateNativeMediaSession("play");
+    }
+    return;
+  }
+
   if (!state.audio) return;
   if (state.playing) {
     state.audio.pause();
@@ -911,6 +1022,18 @@ function togglePlay() {
 }
 
 function seekRelative(seconds) {
+  if (isNative()) {
+    if (seconds === -30) {
+      updateNativeMediaSession("seekBack");
+    } else if (seconds === 30) {
+      updateNativeMediaSession("seekForward");
+    } else {
+      const curMs = (state.nativePosition || 0) * 1000;
+      updateNativeMediaSession("seek", { position: Math.max(0, curMs + seconds * 1000) });
+    }
+    return;
+  }
+
   if (!state.audio) return;
   state.audio.currentTime = Math.max(0, Math.min(state.audio.duration || 0, state.audio.currentTime + seconds));
 }
@@ -918,18 +1041,20 @@ function seekRelative(seconds) {
 function startPositionSaving() {
   if (state.positionTimer) clearInterval(state.positionTimer);
   state.positionTimer = setInterval(() => {
-    if (!state.audio || !state.currentBook) return;
-    const totalDuration = state.tracks.reduce((sum, t) => sum + (t.duration || state.audio.duration || 0), 0);
+    if (!state.currentBook) return;
+    const curTime = getCurrentTime();
+    const dur = getDuration();
+    const totalDuration = state.tracks.reduce((sum, t) => sum + (t.duration || dur || 0), 0);
     let elapsed = 0;
     for (let i = 0; i < state.currentTrackIndex; i++) {
       elapsed += state.tracks[i].duration || 0;
     }
-    elapsed += state.audio.currentTime;
+    elapsed += curTime;
     const percent = totalDuration > 0 ? elapsed / totalDuration : 0;
 
     state.positions[state.currentBook.id] = {
       trackIndex: state.currentTrackIndex,
-      time: state.audio.currentTime,
+      time: curTime,
       percent,
       finished: false,
     };
@@ -938,7 +1063,9 @@ function startPositionSaving() {
 }
 
 function backToLibrary() {
-  if (state.audio) {
+  if (isNative()) {
+    updateNativeMediaSession("pause");
+  } else if (state.audio) {
     state.audio.pause();
     state.playing = false;
     updatePlayButton();
@@ -1044,6 +1171,10 @@ function setTheme(dark) {
     document.documentElement.removeAttribute("data-theme");
   }
   localStorage.setItem("theme", dark ? "dark" : "light");
+
+  if (isNative() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaSession) {
+    window.Capacitor.Plugins.MediaSession.setStatusBarStyle({ isDark: dark });
+  }
 }
 
 // Event wiring
@@ -1062,8 +1193,64 @@ function init() {
   $("prefTheme").checked = isDark;
 
   updatePlexUI();
-  if (state.plexToken && state.selectedLibraryKeys.length > 0) loadPlexLibrary();
+  restoreLastPlayedBook();
+  if (state.plexToken && state.selectedLibraryKeys.length > 0) {
+    loadPlexLibrary().then(() => {
+      restoreLastPlayedBook();
+    });
+  }
   renderLibrary();
+
+  if (isNative() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaSession) {
+    try {
+      const ms = window.Capacitor.Plugins.MediaSession;
+      ms.addListener("onPlaybackStateChanged", (data) => {
+        if (data && data.isPlaying !== undefined) {
+          state.playing = data.isPlaying;
+          updatePlayButton();
+        }
+      });
+      ms.addListener("onPositionChanged", (data) => {
+        if (data && data.position !== undefined) {
+          const sec = data.position / 1000;
+          state.nativePosition = sec;
+          $("currentTime").textContent = formatTime(sec);
+          $("seekBar").value = sec;
+          const totalDur = getDuration();
+          if (totalDur > 0) {
+            const pct = Math.min(100, (sec / totalDur) * 100);
+            $("seekBar").style.background = `linear-gradient(to right, var(--seek-fill) ${pct}%, var(--seek-track) ${pct}%)`;
+          }
+          updateChapterSelection();
+        }
+      });
+      ms.addListener("onDurationChanged", (data) => {
+        if (data && data.duration !== undefined && data.duration > 0) {
+          const durSec = data.duration / 1000;
+          state.nativeDuration = durSec;
+          $("totalTime").textContent = formatTime(durSec);
+          $("seekBar").max = durSec;
+        }
+      });
+    } catch (e) {
+      console.warn("MediaSession listener failed:", e);
+    }
+  }
+
+  setInterval(() => {
+    if (isNative() && state.playing) {
+      state.nativePosition = (state.nativePosition || 0) + 1;
+      const sec = state.nativePosition;
+      const totalDur = getDuration();
+      $("currentTime").textContent = formatTime(sec);
+      $("seekBar").value = sec;
+      if (totalDur > 0) {
+        const pct = Math.min(100, (sec / totalDur) * 100);
+        $("seekBar").style.background = `linear-gradient(to right, var(--seek-fill) ${pct}%, var(--seek-track) ${pct}%)`;
+      }
+      updateChapterSelection();
+    }
+  }, 1000);
 
   // Plex auth
   $("signInBtn").addEventListener("click", startPlexAuth);
@@ -1115,7 +1302,11 @@ function init() {
 
   $("speedSelect").addEventListener("change", (e) => {
     state.speed = parseFloat(e.target.value);
-    if (state.audio) state.audio.playbackRate = state.speed;
+    if (isNative() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaSession) {
+      window.Capacitor.Plugins.MediaSession.setSpeed({ speed: state.speed });
+    } else if (state.audio) {
+      state.audio.playbackRate = state.speed;
+    }
   });
 
   $("chapterSelect").addEventListener("change", (e) => {
@@ -1123,10 +1314,19 @@ function init() {
     const ch = state.chapters[idx];
     if (!ch) return;
     state.currentChapterIndex = idx;
-    if (ch.trackIndex === state.currentTrackIndex && state.audio) {
-      state.audio.currentTime = ch.startOffset;
+    const seekTime = ch.startOffset || 0;
+    state.nativePosition = seekTime;
+    $("currentTime").textContent = formatTime(seekTime);
+    $("seekBar").value = seekTime;
+
+    if (ch.trackIndex === state.currentTrackIndex) {
+      if (isNative() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaSession) {
+        window.Capacitor.Plugins.MediaSession.seek({ position: Math.round(seekTime * 1000) });
+      } else if (state.audio) {
+        state.audio.currentTime = seekTime;
+      }
     } else {
-      loadTrack(ch.trackIndex, ch.startOffset);
+      loadTrack(ch.trackIndex, seekTime);
     }
   });
 
@@ -1134,7 +1334,14 @@ function init() {
   if (dlBtn) dlBtn.addEventListener("click", downloadCurrentBook);
 
   $("seekBar").addEventListener("input", (e) => {
-    if (state.audio) state.audio.currentTime = parseFloat(e.target.value);
+    const val = parseFloat(e.target.value);
+    if (isNative() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaSession) {
+      state.nativePosition = val;
+      $("currentTime").textContent = formatTime(val);
+      window.Capacitor.Plugins.MediaSession.seek({ position: Math.round(val * 1000) });
+    } else if (state.audio) {
+      state.audio.currentTime = val;
+    }
   });
 
   // Close modals on backdrop click

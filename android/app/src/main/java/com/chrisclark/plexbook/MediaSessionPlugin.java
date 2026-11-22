@@ -1,0 +1,253 @@
+package com.chrisclark.plexbook;
+
+import android.content.ComponentName;
+import android.content.Context;
+import android.net.Uri;
+import android.view.Window;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.MediaMetadata;
+import androidx.media3.common.Player;
+import androidx.media3.session.MediaController;
+import androidx.media3.session.SessionToken;
+import com.getcapacitor.JSObject;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
+
+@CapacitorPlugin(name = "MediaSession")
+public class MediaSessionPlugin extends Plugin {
+
+    private MediaController mediaController;
+    private ListenableFuture<MediaController> controllerFuture;
+    private long lastRequestedPositionMs = 0L;
+
+    private Long getPositionFromCall(PluginCall call) {
+        Long l = call.getLong("position");
+        if (l != null) return l;
+        Double d = call.getDouble("position");
+        if (d != null) return d.longValue();
+        Integer i = call.getInt("position");
+        if (i != null) return i.longValue();
+        return null;
+    }
+
+    @Override
+    public void load() {
+        super.load();
+        Context context = getContext();
+        SessionToken sessionToken = new SessionToken(context, new ComponentName(context, PlaybackService.class));
+        controllerFuture = new MediaController.Builder(context, sessionToken).buildAsync();
+        controllerFuture.addListener(() -> {
+            try {
+                mediaController = controllerFuture.get();
+                setupControllerListener();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }, MoreExecutors.directExecutor());
+    }
+
+    private void setupControllerListener() {
+        if (mediaController == null) return;
+        mediaController.addListener(new Player.Listener() {
+            @Override
+            public void onIsPlayingChanged(boolean isPlaying) {
+                JSObject ret = new JSObject();
+                ret.put("isPlaying", isPlaying);
+                notifyListeners("onPlaybackStateChanged", ret);
+            }
+
+            @Override
+            public void onPositionDiscontinuity(Player.PositionInfo oldPosition, Player.PositionInfo newPosition, int reason) {
+                long posMs = newPosition.positionMs;
+                // Ignore transient 0 ms position events right after loading if a non-zero position was requested
+                if (posMs == 0 && lastRequestedPositionMs > 0 && !mediaController.isPlaying()) {
+                    return;
+                }
+                JSObject ret = new JSObject();
+                ret.put("position", posMs);
+                ret.put("oldPosition", oldPosition.positionMs);
+                notifyListeners("onPositionChanged", ret);
+            }
+
+            @Override
+            public void onPlaybackStateChanged(int playbackState) {
+                if (mediaController != null) {
+                    JSObject ret = new JSObject();
+                    long duration = mediaController.getDuration();
+                    long position = mediaController.getCurrentPosition();
+                    ret.put("duration", duration > 0 ? duration : 0);
+                    ret.put("position", position > 0 ? position : 0);
+                    notifyListeners("onDurationChanged", ret);
+                }
+            }
+        });
+    }
+
+    @PluginMethod
+    public void setStatusBarStyle(PluginCall call) {
+        Boolean isDark = call.getBoolean("isDark", false);
+        getBridge().executeOnMainThread(() -> {
+            try {
+                Window window = getBridge().getActivity().getWindow();
+                WindowInsetsControllerCompat controller =
+                    WindowCompat.getInsetsController(window, window.getDecorView());
+                if (controller != null) {
+                    boolean darkBg = isDark != null && isDark;
+                    controller.setAppearanceLightStatusBars(!darkBg);
+                    controller.setAppearanceLightNavigationBars(!darkBg);
+                }
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("Failed to set status bar style: " + e.getMessage());
+            }
+        });
+    }
+
+    @PluginMethod
+    public void loadMedia(PluginCall call) {
+        String url = call.getString("url");
+        String title = call.getString("title", "Unknown Title");
+        String artist = call.getString("artist", "Unknown Artist");
+        String artworkUrl = call.getString("artworkUrl");
+        Long position = getPositionFromCall(call);
+
+        if (url == null) {
+            call.reject("URL is required");
+            return;
+        }
+
+        if (url.startsWith("blob:")) {
+            call.reject("Blob URL not supported natively");
+            return;
+        }
+
+        String mediaUrl = url;
+        if (mediaUrl.contains("/_capacitor_file_")) {
+            mediaUrl = mediaUrl.replaceAll("https?://[^/]+/_capacitor_file_", "file://");
+        }
+
+        final String finalMediaUrl = mediaUrl;
+        final long startPositionMs = position != null ? position : 0L;
+        lastRequestedPositionMs = startPositionMs;
+
+        getBridge().executeOnMainThread(() -> {
+            if (mediaController != null) {
+                MediaMetadata.Builder metaBuilder = new MediaMetadata.Builder()
+                    .setTitle(title)
+                    .setArtist(artist)
+                    .setIsPlayable(true);
+
+                if (artworkUrl != null && !artworkUrl.isEmpty()) {
+                    try {
+                        metaBuilder.setArtworkUri(Uri.parse(artworkUrl));
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                MediaItem mediaItem = new MediaItem.Builder()
+                    .setUri(finalMediaUrl)
+                    .setMediaMetadata(metaBuilder.build())
+                    .build();
+
+                mediaController.setMediaItem(mediaItem, startPositionMs);
+                if (startPositionMs > 0) {
+                    mediaController.seekTo(startPositionMs);
+                }
+                mediaController.prepare();
+                call.resolve();
+            } else {
+                call.reject("Media controller not ready");
+            }
+        });
+    }
+
+    @PluginMethod
+    public void play(PluginCall call) {
+        getBridge().executeOnMainThread(() -> {
+            if (mediaController != null) {
+                mediaController.play();
+                call.resolve();
+            } else {
+                call.reject("Media controller not ready");
+            }
+        });
+    }
+
+    @PluginMethod
+    public void pause(PluginCall call) {
+        getBridge().executeOnMainThread(() -> {
+            if (mediaController != null) {
+                mediaController.pause();
+                call.resolve();
+            } else {
+                call.reject("Media controller not ready");
+            }
+        });
+    }
+
+    @PluginMethod
+    public void seek(PluginCall call) {
+        Long position = getPositionFromCall(call);
+        if (position == null) {
+            call.reject("Position is required");
+            return;
+        }
+
+        lastRequestedPositionMs = position;
+
+        getBridge().executeOnMainThread(() -> {
+            if (mediaController != null) {
+                mediaController.seekTo(position);
+                call.resolve();
+            } else {
+                call.reject("Media controller not ready");
+            }
+        });
+    }
+
+    @PluginMethod
+    public void seekBack(PluginCall call) {
+        getBridge().executeOnMainThread(() -> {
+            if (mediaController != null) {
+                mediaController.seekBack();
+                lastRequestedPositionMs = mediaController.getCurrentPosition();
+                call.resolve();
+            } else {
+                call.reject("Media controller not ready");
+            }
+        });
+    }
+
+    @PluginMethod
+    public void seekForward(PluginCall call) {
+        getBridge().executeOnMainThread(() -> {
+            if (mediaController != null) {
+                mediaController.seekForward();
+                lastRequestedPositionMs = mediaController.getCurrentPosition();
+                call.resolve();
+            } else {
+                call.reject("Media controller not ready");
+            }
+        });
+    }
+
+    @PluginMethod
+    public void setSpeed(PluginCall call) {
+        Float speed = call.getFloat("speed", 1.0f);
+        getBridge().executeOnMainThread(() -> {
+            if (mediaController != null) {
+                mediaController.setPlaybackSpeed(speed != null ? speed : 1.0f);
+                call.resolve();
+            } else {
+                call.reject("Media controller not ready");
+            }
+        });
+    }
+}

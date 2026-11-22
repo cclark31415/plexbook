@@ -15,10 +15,10 @@
 15.  If possible, have an optional audio spectrum analyzer in place of the album art.
 16.  This should work as a web application and as an android application with possible iOS development in the future.
 17.  The web application will run in Azure
-18.  The code will be hosted in Github
-19.  A build pipeline will be created so pushes to github will build and push into Azure
+18.  The code will be hosted in GitHub
+19.  A build pipeline will be created so pushes to GitHub will build and push into Azure
 20.  Optimize the web app for search engines
-21.  Add "Buy me a diet pepsi" for venmo and paypal buttons to the bottom of the web page
+21.  Add "Buy me a diet pepsi" for venmo and PayPal buttons to the bottom of the web page
 22.  For the mobile app, limit the number of hours that the app can be used for unless the user buys the app after the first month.
 23.  Pixel 11 Pro Fold (codename: `yogi`) Screen Specifications & Responsive Adaptation:
      - **Closed Screen (Cover Display)**:
