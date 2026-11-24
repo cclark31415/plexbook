@@ -74,8 +74,7 @@ public class PlaybackService extends MediaSessionService {
                     if (pos + 1 < originalPosition + remaining) {
                         short sample = inputBuffer.getShort(pos);
                         float amp = Math.abs(sample) / 32768.0f;
-                        float scaledAmp = Math.min(1.0f, (float) Math.pow(amp * 2.5f, 0.65));
-                        pcmFrequencies[i] = pcmFrequencies[i] * 0.25f + scaledAmp * 0.75f;
+                        pcmFrequencies[i] = pcmFrequencies[i] * 0.3f + amp * 0.7f;
                     }
                 }
                 inputBuffer.order(originalOrder);
@@ -170,10 +169,16 @@ public class PlaybackService extends MediaSessionService {
 
                     Player.Commands playerCommands = defaultResult.availablePlayerCommands
                         .buildUpon()
+                        .add(Player.COMMAND_PLAY_PAUSE)
+                        .add(Player.COMMAND_PREPARE)
                         .add(Player.COMMAND_SEEK_BACK)
                         .add(Player.COMMAND_SEEK_FORWARD)
-                        .add(Player.COMMAND_PLAY_PAUSE)
                         .add(Player.COMMAND_SEEK_TO_MEDIA_ITEM)
+                        .add(Player.COMMAND_SEEK_TO_NEXT)
+                        .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+                        .add(Player.COMMAND_SET_SPEED_AND_PITCH)
+                        .add(Player.COMMAND_GET_CURRENT_MEDIA_ITEM)
+                        .add(Player.COMMAND_GET_TIMELINE)
                         .build();
 
                     return MediaSession.ConnectionResult.accept(sessionCommands, playerCommands);

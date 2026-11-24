@@ -1195,15 +1195,29 @@ function drawSpectrum() {
       const barWidth = canvas.width / bufferLength;
       let x = 0;
 
+      if (!state.spectrumPeaks || state.spectrumPeaks.length !== bufferLength) {
+        state.spectrumPeaks = new Float32Array(bufferLength);
+      }
+
       for (let i = 0; i < bufferLength; i++) {
         let barHeight = 0;
         if (state.playing) {
-          const pcmAmp = (state.nativeFrequencies && state.nativeFrequencies[i] !== undefined)
+          const rawAmp = (state.nativeFrequencies && state.nativeFrequencies[i] !== undefined)
             ? state.nativeFrequencies[i]
             : 0;
-          barHeight = Math.max(6 * dpr, pcmAmp * canvas.height * 0.9);
+
+          const targetAmp = Math.min(0.85, Math.pow(rawAmp * 1.8, 0.7));
+          const targetHeight = Math.max(4 * dpr, targetAmp * canvas.height);
+
+          if (targetHeight > state.spectrumPeaks[i]) {
+            state.spectrumPeaks[i] = targetHeight;
+          } else {
+            state.spectrumPeaks[i] = Math.max(4 * dpr, state.spectrumPeaks[i] * 0.82);
+          }
+          barHeight = state.spectrumPeaks[i];
         } else {
           barHeight = 4 * dpr;
+          state.spectrumPeaks[i] = 4 * dpr;
         }
         ctx.fillStyle = accent;
         ctx.globalAlpha = state.playing ? 0.55 + (barHeight / canvas.height) * 0.45 : 0.25;
