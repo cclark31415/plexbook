@@ -650,6 +650,16 @@ async function openBook(bookId) {
   const pos = state.positions[book.id];
   const trackIdx = pos ? (pos.trackIndex || 0) : 0;
   const time = pos ? (pos.time || 0) : 0;
+
+  const currentTrack = state.tracks[trackIdx];
+  if (currentTrack && currentTrack.duration) {
+    state.nativeDuration = currentTrack.duration;
+    $("seekBar").max = currentTrack.duration;
+  } else if (book.duration) {
+    state.nativeDuration = book.duration;
+    $("seekBar").max = book.duration;
+  }
+
   loadTrack(trackIdx, time);
 }
 
@@ -800,10 +810,37 @@ function chapterIndexFor(trackIndex, time) {
     const c = state.chapters[i];
     if (c.trackIndex < trackIndex) { last = i; continue; }
     if (c.trackIndex > trackIndex) break;
-    if (c.startOffset <= time) last = i;
+    if (c.startOffset <= time + 0.5) last = i;
     else break;
   }
   return last;
+}
+
+function setTimeDisplay(mode) {
+  state.timeDisplay = mode;
+  localStorage.setItem("plexbook_time_display", mode);
+  const sel = $("prefTimeDisplay");
+  if (sel) sel.value = mode;
+  updateTimeLabels();
+}
+
+function updateTimeLabels() {
+  const curSec = getCurrentTime();
+  const durSec = getDuration();
+
+  $("currentTime").textContent = formatTime(curSec);
+
+  const totalTimeEl = $("totalTime");
+  if (totalTimeEl) {
+    if (state.timeDisplay === "remaining") {
+      const remainingSec = Math.max(0, durSec - curSec);
+      totalTimeEl.textContent = "-" + formatTime(remainingSec);
+      totalTimeEl.title = "Showing Remaining Time (click to switch)";
+    } else {
+      totalTimeEl.textContent = formatTime(durSec);
+      totalTimeEl.title = "Showing Total Time (click to switch)";
+    }
+  }
 }
 
 function getCurrentTime() {
@@ -825,7 +862,10 @@ function updateChapterSelection() {
   const idx = chapterIndexFor(state.currentTrackIndex, curTime);
   if (idx !== state.currentChapterIndex) {
     state.currentChapterIndex = idx;
-    $("chapterSelect").value = idx;
+    const sel = $("chapterSelect");
+    if (sel) {
+      sel.value = String(idx);
+    }
   }
 }
 
@@ -868,7 +908,14 @@ function loadTrack(index, startTime = 0) {
 
   state.currentTrackIndex = index;
   state.currentChapterIndex = chapterIndexFor(index, startTime);
-  $("chapterSelect").value = state.currentChapterIndex;
+  const sel = $("chapterSelect");
+  if (sel) sel.value = String(state.currentChapterIndex);
+
+  const currentTrack = state.tracks[index];
+  if (currentTrack && currentTrack.duration) {
+    state.nativeDuration = currentTrack.duration;
+    $("seekBar").max = currentTrack.duration;
+  }
 
   const trackUrl = state.tracks[index].url;
   console.log("Loading track:", index, trackUrl);
@@ -879,8 +926,14 @@ function loadTrack(index, startTime = 0) {
       state.audio = null;
     }
     state.nativePosition = startTime;
-    $("currentTime").textContent = formatTime(startTime);
+    updateTimeLabels();
+
     $("seekBar").value = startTime;
+    const totalDur = getDuration();
+    if (totalDur > 0) {
+      const pct = Math.min(100, (startTime / totalDur) * 100);
+      $("seekBar").style.background = `linear-gradient(to right, var(--seek-fill) ${pct}%, var(--seek-track) ${pct}%)`;
+    }
 
     updateNativeMediaSession("load", {
       url: trackUrl,
@@ -957,13 +1010,13 @@ function loadTrack(index, startTime = 0) {
 }
 
 function onMetadataLoaded() {
-  $("totalTime").textContent = formatTime(state.audio.duration);
+  updateTimeLabels();
   $("seekBar").max = state.audio.duration || 100;
 }
 
 function onTimeUpdate() {
   if (!state.audio) return;
-  $("currentTime").textContent = formatTime(state.audio.currentTime);
+  updateTimeLabels();
   $("seekBar").value = state.audio.currentTime;
 
   const bar = $("seekBar");
@@ -1294,14 +1347,25 @@ function init() {
           updatePlayButton();
         }
       });
+      ms.addListener("onTrackChanged", (data) => {
+        if (data && data.mediaItemIndex !== undefined) {
+          state.currentTrackIndex = data.mediaItemIndex;
+          if (data.position !== undefined && data.position > 0) {
+            state.nativePosition = data.position / 1000;
+            updateTimeLabels();
+            $("seekBar").value = state.nativePosition;
+          }
+          updateChapterSelection();
+        }
+      });
       ms.addListener("onPositionChanged", (data) => {
         if (data && data.position !== undefined) {
           const sec = data.position / 1000;
-          if (sec === 0 && state.nativePosition > 0 && !state.playing) {
+          if (sec === 0 && state.nativePosition > 0) {
             return;
           }
           state.nativePosition = sec;
-          $("currentTime").textContent = formatTime(sec);
+          updateTimeLabels();
           $("seekBar").value = sec;
           const totalDur = getDuration();
           if (totalDur > 0) {
@@ -1315,7 +1379,7 @@ function init() {
         if (data && data.duration !== undefined && data.duration > 0) {
           const durSec = data.duration / 1000;
           state.nativeDuration = durSec;
-          $("totalTime").textContent = formatTime(durSec);
+          updateTimeLabels();
           $("seekBar").max = durSec;
         }
       });
@@ -1329,7 +1393,7 @@ function init() {
       state.nativePosition = (state.nativePosition || 0) + 1;
       const sec = state.nativePosition;
       const totalDur = getDuration();
-      $("currentTime").textContent = formatTime(sec);
+      updateTimeLabels();
       $("seekBar").value = sec;
       if (totalDur > 0) {
         const pct = Math.min(100, (sec / totalDur) * 100);
@@ -1364,6 +1428,22 @@ function init() {
   $("prefsClose").addEventListener("click", () => ($("prefsModal").hidden = true));
   $("prefTheme").addEventListener("change", (e) => setTheme(e.target.checked));
   $("prefSpectrum").addEventListener("change", (e) => toggleSpectrum(e.target.checked));
+
+  state.timeDisplay = localStorage.getItem("plexbook_time_display") || "total";
+  const prefTimeSel = $("prefTimeDisplay");
+  if (prefTimeSel) {
+    prefTimeSel.value = state.timeDisplay;
+    prefTimeSel.addEventListener("change", (e) => setTimeDisplay(e.target.value));
+  }
+
+  const totalTimeLabel = $("totalTime");
+  if (totalTimeLabel) {
+    totalTimeLabel.addEventListener("click", () => {
+      const nextMode = state.timeDisplay === "remaining" ? "total" : "remaining";
+      setTimeDisplay(nextMode);
+      toast(nextMode === "remaining" ? "Showing Remaining Time" : "Showing Total Time", 1500);
+    });
+  }
 
   // Search and filter
   $("searchInput").addEventListener("input", renderLibrary);

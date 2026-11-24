@@ -156,8 +156,29 @@ html, body {
 .prefs-about ul { margin: 0; padding-left: 18px; font-size: 0.85rem; color: var(--muted); line-height: 1.5; }
 .prefs-about li { margin-bottom: 3px; }
 
-.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; color: var(--muted); }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; }
 .field.toggle { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+.field.select-field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text);
+}
+.field.select-field select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+#totalTime {
+  cursor: pointer;
+  user-select: none;
+}
+#totalTime:hover {
+  color: var(--text);
+}
 
 .plex-settings { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
 .connection-info { font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; }

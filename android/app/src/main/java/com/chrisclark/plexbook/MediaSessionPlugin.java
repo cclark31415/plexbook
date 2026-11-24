@@ -4,6 +4,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.net.Uri;
 import android.view.Window;
+import androidx.annotation.Nullable;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.media3.common.MediaItem;
@@ -82,10 +83,27 @@ public class MediaSessionPlugin extends Plugin {
             }
 
             @Override
+            public void onMediaItemTransition(@Nullable MediaItem mediaItem, int reason) {
+                if (mediaController != null) {
+                    long posMs = mediaController.getCurrentPosition();
+                    if (posMs == 0 && lastRequestedPositionMs > 0) {
+                        posMs = lastRequestedPositionMs;
+                    }
+                    JSObject ret = new JSObject();
+                    ret.put("mediaItemIndex", mediaController.getCurrentMediaItemIndex());
+                    ret.put("position", posMs);
+                    notifyListeners("onTrackChanged", ret);
+                }
+            }
+
+            @Override
             public void onPositionDiscontinuity(Player.PositionInfo oldPosition, Player.PositionInfo newPosition, int reason) {
-                long posMs = newPosition.positionMs;
+                if (mediaController == null) return;
+                long actualPosMs = mediaController.getCurrentPosition();
+                long posMs = actualPosMs > 0 ? actualPosMs : newPosition.positionMs;
+
                 // Ignore transient 0 ms position events right after loading if a non-zero position was requested
-                if (posMs == 0 && lastRequestedPositionMs > 0 && !mediaController.isPlaying()) {
+                if (posMs == 0 && lastRequestedPositionMs > 0) {
                     return;
                 }
                 JSObject ret = new JSObject();
@@ -100,6 +118,9 @@ public class MediaSessionPlugin extends Plugin {
                     JSObject ret = new JSObject();
                     long duration = mediaController.getDuration();
                     long position = mediaController.getCurrentPosition();
+                    if (position == 0 && lastRequestedPositionMs > 0) {
+                        position = lastRequestedPositionMs;
+                    }
                     ret.put("duration", duration > 0 ? duration : 0);
                     ret.put("position", position > 0 ? position : 0);
                     notifyListeners("onDurationChanged", ret);
