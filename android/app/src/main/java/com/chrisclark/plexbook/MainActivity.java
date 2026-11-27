@@ -11,7 +11,12 @@ import java.util.Locale;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
         registerPlugin(MediaSessionPlugin.class);
+
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().hide();
+        }
 
         boolean isDark = false;
         try {
@@ -68,6 +73,5 @@ public class MainActivity extends BridgeActivity {
                 return defaultMap != null ? defaultMap.getContentTypeFor(fileName) : null;
             }
         });
-        super.onCreate(savedInstanceState);
     }
 }
