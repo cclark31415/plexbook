@@ -774,13 +774,27 @@ async function downloadCurrentBook() {
 
 function buildChapters() {
   state.chapters = [];
+  let currentBookOffset = 0;
+
   state.tracks.forEach((t, ti) => {
+    t.bookStartOffset = currentBookOffset;
+    const trackDur = t.duration || 0;
+
     if (t.chapters && t.chapters.length > 0) {
-      t.chapters.forEach((c) => {
+      t.chapters.forEach((c, ci) => {
+        let chapterDur = 0;
+        if (ci < t.chapters.length - 1) {
+          chapterDur = (t.chapters[ci + 1].startOffset || 0) - (c.startOffset || 0);
+        } else if (trackDur > 0) {
+          chapterDur = Math.max(1, trackDur - (c.startOffset || 0));
+        }
+
         state.chapters.push({
           name: c.name || `Chapter ${state.chapters.length + 1}`,
           trackIndex: ti,
           startOffset: c.startOffset || 0,
+          duration: chapterDur,
+          bookStartOffset: currentBookOffset + (c.startOffset || 0)
         });
       });
     } else {
@@ -788,9 +802,15 @@ function buildChapters() {
         name: t.name || `Track ${ti + 1}`,
         trackIndex: ti,
         startOffset: 0,
+        duration: trackDur,
+        bookStartOffset: currentBookOffset
       });
     }
+
+    currentBookOffset += trackDur;
   });
+
+  state.totalBookDuration = currentBookOffset;
 }
 
 function populateChapters() {
@@ -816,30 +836,106 @@ function chapterIndexFor(trackIndex, time) {
   return last;
 }
 
+function setProgressScope(scope) {
+  state.progressScope = scope;
+  localStorage.setItem("plexbook_progress_scope", scope);
+  const sel = $("prefProgressScope");
+  if (sel) sel.value = scope;
+  updateTimeAndProgressBar();
+}
+
 function setTimeDisplay(mode) {
   state.timeDisplay = mode;
   localStorage.setItem("plexbook_time_display", mode);
   const sel = $("prefTimeDisplay");
   if (sel) sel.value = mode;
-  updateTimeLabels();
+  updateTimeAndProgressBar();
 }
 
-function updateTimeLabels() {
-  const curSec = getCurrentTime();
-  const durSec = getDuration();
+function updateTimeAndProgressBar() {
+  const curTrackTime = getCurrentTime();
+  const curTrackDur = getDuration();
 
-  $("currentTime").textContent = formatTime(curSec);
+  const chapter = (state.chapters && state.chapters[state.currentChapterIndex])
+    ? state.chapters[state.currentChapterIndex]
+    : { startOffset: 0, duration: curTrackDur, bookStartOffset: 0 };
 
+  const currentTrack = (state.tracks && state.tracks[state.currentTrackIndex])
+    ? state.tracks[state.currentTrackIndex]
+    : { duration: curTrackDur, bookStartOffset: 0 };
+
+  let elapsed = 0;
+  let totalDur = 0;
+
+  if (state.progressScope === "book") {
+    elapsed = (currentTrack.bookStartOffset || 0) + curTrackTime;
+    totalDur = state.totalBookDuration > 0 ? state.totalBookDuration : curTrackDur;
+  } else {
+    // "chapter" scope
+    elapsed = Math.max(0, curTrackTime - (chapter.startOffset || 0));
+    const chDur = chapter.duration || (curTrackDur > 0 ? Math.max(1, curTrackDur - chapter.startOffset) : 0);
+    totalDur = chDur > 0 ? chDur : curTrackDur;
+  }
+
+  // Left time label (Current Elapsed)
+  const curTimeEl = $("currentTime");
+  if (curTimeEl) {
+    curTimeEl.textContent = formatTime(elapsed);
+    curTimeEl.title = state.progressScope === "book"
+      ? "Showing Total Book Progress (click to switch to Chapter)"
+      : "Showing Current Chapter Progress (click to switch to Book)";
+  }
+
+  // Right time label (Total / Remaining)
   const totalTimeEl = $("totalTime");
   if (totalTimeEl) {
     if (state.timeDisplay === "remaining") {
-      const remainingSec = Math.max(0, durSec - curSec);
+      const remainingSec = Math.max(0, totalDur - elapsed);
       totalTimeEl.textContent = "-" + formatTime(remainingSec);
-      totalTimeEl.title = "Showing Remaining Time (click to switch)";
+      totalTimeEl.title = "Showing Remaining Time (click to switch to Total)";
     } else {
-      totalTimeEl.textContent = formatTime(durSec);
-      totalTimeEl.title = "Showing Total Time (click to switch)";
+      totalTimeEl.textContent = formatTime(totalDur);
+      totalTimeEl.title = "Showing Total Time (click to switch to Remaining)";
     }
+  }
+
+  // Seek bar position & fill gradient
+  const seekBar = $("seekBar");
+  if (seekBar && totalDur > 0) {
+    seekBar.max = totalDur;
+    seekBar.value = Math.min(elapsed, totalDur);
+    const pct = Math.min(100, (elapsed / totalDur) * 100);
+    seekBar.style.background = `linear-gradient(to right, var(--seek-fill) ${pct}%, var(--seek-track) ${pct}%)`;
+  }
+}
+
+function seekToBookPosition(targetBookTime) {
+  let accumulated = 0;
+  for (let i = 0; i < state.tracks.length; i++) {
+    const trackDur = state.tracks[i].duration || getDuration() || 0;
+    if (targetBookTime <= accumulated + trackDur || i === state.tracks.length - 1) {
+      const trackOffset = Math.max(0, targetBookTime - accumulated);
+      if (i !== state.currentTrackIndex) {
+        loadTrack(i, trackOffset);
+      } else {
+        performSeek(trackOffset);
+      }
+      break;
+    }
+    accumulated += trackDur;
+  }
+}
+
+function performSeek(targetTrackTime) {
+  if (isNative()) {
+    state.nativePosition = targetTrackTime;
+    updateTimeAndProgressBar();
+    if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaSession) {
+      window.Capacitor.Plugins.MediaSession.seek({ position: Math.round(targetTrackTime * 1000) });
+    }
+  } else if (state.audio) {
+    state.audio.currentTime = targetTrackTime;
+    updateTimeAndProgressBar();
   }
 }
 
@@ -926,14 +1022,7 @@ function loadTrack(index, startTime = 0) {
       state.audio = null;
     }
     state.nativePosition = startTime;
-    updateTimeLabels();
-
-    $("seekBar").value = startTime;
-    const totalDur = getDuration();
-    if (totalDur > 0) {
-      const pct = Math.min(100, (startTime / totalDur) * 100);
-      $("seekBar").style.background = `linear-gradient(to right, var(--seek-fill) ${pct}%, var(--seek-track) ${pct}%)`;
-    }
+    updateTimeAndProgressBar();
 
     updateNativeMediaSession("load", {
       url: trackUrl,
@@ -1010,19 +1099,12 @@ function loadTrack(index, startTime = 0) {
 }
 
 function onMetadataLoaded() {
-  updateTimeLabels();
-  $("seekBar").max = state.audio.duration || 100;
+  updateTimeAndProgressBar();
 }
 
 function onTimeUpdate() {
   if (!state.audio) return;
-  updateTimeLabels();
-  $("seekBar").value = state.audio.currentTime;
-
-  const bar = $("seekBar");
-  const pct = state.audio.duration ? (state.audio.currentTime / state.audio.duration) * 100 : 0;
-  bar.style.background = `linear-gradient(to right, var(--seek-fill) ${pct}%, var(--seek-track) ${pct}%)`;
-
+  updateTimeAndProgressBar();
   updateChapterSelection();
 }
 
@@ -1366,8 +1448,7 @@ function init() {
           state.currentTrackIndex = data.mediaItemIndex;
           if (data.position !== undefined && data.position > 0) {
             state.nativePosition = data.position / 1000;
-            updateTimeLabels();
-            $("seekBar").value = state.nativePosition;
+            updateTimeAndProgressBar();
           }
           updateChapterSelection();
         }
@@ -1379,13 +1460,7 @@ function init() {
             return;
           }
           state.nativePosition = sec;
-          updateTimeLabels();
-          $("seekBar").value = sec;
-          const totalDur = getDuration();
-          if (totalDur > 0) {
-            const pct = Math.min(100, (sec / totalDur) * 100);
-            $("seekBar").style.background = `linear-gradient(to right, var(--seek-fill) ${pct}%, var(--seek-track) ${pct}%)`;
-          }
+          updateTimeAndProgressBar();
           updateChapterSelection();
         }
       });
@@ -1393,8 +1468,7 @@ function init() {
         if (data && data.duration !== undefined && data.duration > 0) {
           const durSec = data.duration / 1000;
           state.nativeDuration = durSec;
-          updateTimeLabels();
-          $("seekBar").max = durSec;
+          updateTimeAndProgressBar();
         }
       });
     } catch (e) {
@@ -1405,14 +1479,7 @@ function init() {
   setInterval(() => {
     if (isNative() && state.playing) {
       state.nativePosition = (state.nativePosition || 0) + 1;
-      const sec = state.nativePosition;
-      const totalDur = getDuration();
-      updateTimeLabels();
-      $("seekBar").value = sec;
-      if (totalDur > 0) {
-        const pct = Math.min(100, (sec / totalDur) * 100);
-        $("seekBar").style.background = `linear-gradient(to right, var(--seek-fill) ${pct}%, var(--seek-track) ${pct}%)`;
-      }
+      updateTimeAndProgressBar();
       updateChapterSelection();
     }
   }, 1000);
@@ -1443,11 +1510,27 @@ function init() {
   $("prefTheme").addEventListener("change", (e) => setTheme(e.target.checked));
   $("prefSpectrum").addEventListener("change", (e) => toggleSpectrum(e.target.checked));
 
+  state.progressScope = localStorage.getItem("plexbook_progress_scope") || "chapter";
+  const prefScopeSel = $("prefProgressScope");
+  if (prefScopeSel) {
+    prefScopeSel.value = state.progressScope;
+    prefScopeSel.addEventListener("change", (e) => setProgressScope(e.target.value));
+  }
+
   state.timeDisplay = localStorage.getItem("plexbook_time_display") || "total";
   const prefTimeSel = $("prefTimeDisplay");
   if (prefTimeSel) {
     prefTimeSel.value = state.timeDisplay;
     prefTimeSel.addEventListener("change", (e) => setTimeDisplay(e.target.value));
+  }
+
+  const curTimeLabel = $("currentTime");
+  if (curTimeLabel) {
+    curTimeLabel.addEventListener("click", () => {
+      const nextScope = state.progressScope === "book" ? "chapter" : "book";
+      setProgressScope(nextScope);
+      toast(nextScope === "book" ? "Progress Bar: Total Book" : "Progress Bar: Current Chapter", 1500);
+    });
   }
 
   const totalTimeLabel = $("totalTime");
@@ -1516,12 +1599,14 @@ function init() {
 
   $("seekBar").addEventListener("input", (e) => {
     const val = parseFloat(e.target.value);
-    if (isNative() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaSession) {
-      state.nativePosition = val;
-      $("currentTime").textContent = formatTime(val);
-      window.Capacitor.Plugins.MediaSession.seek({ position: Math.round(val * 1000) });
-    } else if (state.audio) {
-      state.audio.currentTime = val;
+    if (state.progressScope === "book") {
+      seekToBookPosition(val);
+    } else {
+      const chapter = (state.chapters && state.chapters[state.currentChapterIndex])
+        ? state.chapters[state.currentChapterIndex]
+        : { startOffset: 0 };
+      const targetTrackTime = (chapter.startOffset || 0) + val;
+      performSeek(targetTrackTime);
     }
   });
 

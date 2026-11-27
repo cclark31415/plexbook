@@ -172,12 +172,13 @@ html, body {
   color: var(--text);
   font-size: 0.9rem;
 }
-#totalTime {
+#currentTime, #totalTime {
   cursor: pointer;
   user-select: none;
 }
-#totalTime:hover {
+#currentTime:hover, #totalTime:hover {
   color: var(--text);
+}
 }
 
 .plex-settings { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
