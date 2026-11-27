@@ -836,6 +836,16 @@ function chapterIndexFor(trackIndex, time) {
   return last;
 }
 
+function updateTrackDuration(durSec) {
+  if (durSec <= 0) return;
+  state.nativeDuration = durSec;
+  if (state.tracks[state.currentTrackIndex]) {
+    state.tracks[state.currentTrackIndex].duration = durSec;
+  }
+  buildChapters();
+  updateTimeAndProgressBar();
+}
+
 function setProgressScope(scope) {
   state.progressScope = scope;
   localStorage.setItem("plexbook_progress_scope", scope);
@@ -1099,7 +1109,11 @@ function loadTrack(index, startTime = 0) {
 }
 
 function onMetadataLoaded() {
-  updateTimeAndProgressBar();
+  if (state.audio && state.audio.duration) {
+    updateTrackDuration(state.audio.duration);
+  } else {
+    updateTimeAndProgressBar();
+  }
 }
 
 function onTimeUpdate() {
@@ -1467,8 +1481,7 @@ function init() {
       ms.addListener("onDurationChanged", (data) => {
         if (data && data.duration !== undefined && data.duration > 0) {
           const durSec = data.duration / 1000;
-          state.nativeDuration = durSec;
-          updateTimeAndProgressBar();
+          updateTrackDuration(durSec);
         }
       });
     } catch (e) {

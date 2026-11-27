@@ -11,12 +11,8 @@ import java.util.Locale;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
         registerPlugin(MediaSessionPlugin.class);
-
-        if (getSupportActionBar() != null) {
-            getSupportActionBar().hide();
-        }
+        super.onCreate(savedInstanceState);
 
         boolean isDark = false;
         try {

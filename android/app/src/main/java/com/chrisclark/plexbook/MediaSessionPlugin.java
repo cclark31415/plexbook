@@ -46,6 +46,16 @@ public class MediaSessionPlugin extends Plugin {
         return url;
     }
 
+    private void executeWhenControllerReady(Runnable runnable) {
+        if (mediaController != null) {
+            getBridge().executeOnMainThread(runnable);
+        } else if (controllerFuture != null) {
+            controllerFuture.addListener(() -> {
+                getBridge().executeOnMainThread(runnable);
+            }, MoreExecutors.directExecutor());
+        }
+    }
+
     @Override
     public void load() {
         super.load();
@@ -187,7 +197,7 @@ public class MediaSessionPlugin extends Plugin {
         final long startPositionMs = position != null ? position : 0L;
         lastRequestedPositionMs = startPositionMs;
 
-        getBridge().executeOnMainThread(() -> {
+        executeWhenControllerReady(() -> {
             if (mediaController != null) {
                 MediaMetadata.Builder metaBuilder = new MediaMetadata.Builder()
                     .setTitle(title)
@@ -218,31 +228,31 @@ public class MediaSessionPlugin extends Plugin {
                     call.reject("Failed to parse or load media URI: " + e.getMessage());
                 }
             } else {
-                call.reject("Media controller not ready");
+                call.reject("Media controller failed to connect");
             }
         });
     }
 
     @PluginMethod
     public void play(PluginCall call) {
-        getBridge().executeOnMainThread(() -> {
+        executeWhenControllerReady(() -> {
             if (mediaController != null) {
                 mediaController.play();
                 call.resolve();
             } else {
-                call.reject("Media controller not ready");
+                call.reject("Media controller failed to connect");
             }
         });
     }
 
     @PluginMethod
     public void pause(PluginCall call) {
-        getBridge().executeOnMainThread(() -> {
+        executeWhenControllerReady(() -> {
             if (mediaController != null) {
                 mediaController.pause();
                 call.resolve();
             } else {
-                call.reject("Media controller not ready");
+                call.reject("Media controller failed to connect");
             }
         });
     }
@@ -257,38 +267,38 @@ public class MediaSessionPlugin extends Plugin {
 
         lastRequestedPositionMs = position;
 
-        getBridge().executeOnMainThread(() -> {
+        executeWhenControllerReady(() -> {
             if (mediaController != null) {
                 mediaController.seekTo(position);
                 call.resolve();
             } else {
-                call.reject("Media controller not ready");
+                call.reject("Media controller failed to connect");
             }
         });
     }
 
     @PluginMethod
     public void seekBack(PluginCall call) {
-        getBridge().executeOnMainThread(() -> {
+        executeWhenControllerReady(() -> {
             if (mediaController != null) {
                 mediaController.seekBack();
                 lastRequestedPositionMs = mediaController.getCurrentPosition();
                 call.resolve();
             } else {
-                call.reject("Media controller not ready");
+                call.reject("Media controller failed to connect");
             }
         });
     }
 
     @PluginMethod
     public void seekForward(PluginCall call) {
-        getBridge().executeOnMainThread(() -> {
+        executeWhenControllerReady(() -> {
             if (mediaController != null) {
                 mediaController.seekForward();
                 lastRequestedPositionMs = mediaController.getCurrentPosition();
                 call.resolve();
             } else {
-                call.reject("Media controller not ready");
+                call.reject("Media controller failed to connect");
             }
         });
     }
@@ -296,12 +306,12 @@ public class MediaSessionPlugin extends Plugin {
     @PluginMethod
     public void setSpeed(PluginCall call) {
         Float speed = call.getFloat("speed", 1.0f);
-        getBridge().executeOnMainThread(() -> {
+        executeWhenControllerReady(() -> {
             if (mediaController != null) {
                 mediaController.setPlaybackSpeed(speed != null ? speed : 1.0f);
                 call.resolve();
             } else {
-                call.reject("Media controller not ready");
+                call.reject("Media controller failed to connect");
             }
         });
     }
